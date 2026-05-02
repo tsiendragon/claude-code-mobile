@@ -123,6 +123,28 @@ class BridgeClient extends ChangeNotifier {
     return sessions;
   }
 
+  Future<List<WorkspaceSummary>> listWorkspaces() async {
+    final data = await request('workspace.list');
+    final rawWorkspaces = data['workspaces'];
+    if (rawWorkspaces is! List) return const [];
+
+    final workspaces = rawWorkspaces
+        .whereType<Map>()
+        .map((raw) => WorkspaceSummary.fromJson(Map<String, Object?>.from(raw)))
+        .toList();
+    workspaces.sort((a, b) => a.name.compareTo(b.name));
+    return workspaces;
+  }
+
+  Future<WorkspaceSummary> createWorkspace(String name) async {
+    final data = await request('workspace.create', {'name': name});
+    final rawWorkspace = data['workspace'];
+    if (rawWorkspace is Map) {
+      return WorkspaceSummary.fromJson(Map<String, Object?>.from(rawWorkspace));
+    }
+    throw const BridgeException('Bridge did not return a workspace.');
+  }
+
   Future<ChatStateSnapshot> attachSession(String sessionId) async {
     final data = await request('session.attach', {'session_id': sessionId});
     final snapshot = ChatStateSnapshot.fromAttachResponse(data);
@@ -149,13 +171,23 @@ class BridgeClient extends ChangeNotifier {
 
   Future<String> runSession({
     required String name,
-    required String cwd,
+    String? cwd,
+    String? workspaceId,
   }) async {
-    final data = await request('session.run', {
+    if ((workspaceId == null || workspaceId.isEmpty) &&
+        (cwd == null || cwd.isEmpty)) {
+      throw const BridgeException('Workspace or working directory is required.');
+    }
+
+    final payload = <String, Object?>{
       'name': name,
-      'cwd': cwd,
       'backend': 'claude',
-    });
+      if (workspaceId != null && workspaceId.isNotEmpty)
+        'workspace_id': workspaceId
+      else
+        'cwd': cwd,
+    };
+    final data = await request('session.run', payload);
     return data['session_id'] as String? ?? '';
   }
 
@@ -288,7 +320,9 @@ class BridgeClient extends ChangeNotifier {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 20), (_) {
       if (_state == BridgeConnectionState.connected) {
-        unawaited(request('ping').catchError((Object _) {}));
+        unawaited(
+          request('ping').catchError((Object _) => const <String, Object?>{}),
+        );
       }
     });
   }

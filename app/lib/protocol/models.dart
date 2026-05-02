@@ -153,6 +153,30 @@ class SessionSummary {
   }
 }
 
+class WorkspaceSummary {
+  const WorkspaceSummary({
+    required this.id,
+    required this.name,
+    required this.path,
+  });
+
+  final String id;
+  final String name;
+  final String path;
+
+  factory WorkspaceSummary.fromJson(Map<String, Object?> json) {
+    final id = json['id'] as String? ??
+        json['workspace_id'] as String? ??
+        json['workspaceId'] as String? ??
+        '';
+    return WorkspaceSummary(
+      id: id,
+      name: json['name'] as String? ?? id,
+      path: json['path'] as String? ?? '',
+    );
+  }
+}
+
 class ChatStateSnapshot {
   const ChatStateSnapshot({
     required this.session,

@@ -37,7 +37,8 @@ flutter test
 flutter run
 ```
 
-The Bridge requires `allowed_paths` and refuses to run as root. Public deployments should put the Bridge behind WSS, or bind it to a Tailscale IP for private `ws://` access.
+The Bridge always enforces `allowed_paths` (defaulting to `workspace_root`) and refuses to run as root. Public deployments should put the Bridge behind WSS, or bind it to a Tailscale IP for private `ws://` access.
+By default new mobile-created sessions use subdirectories under `~/workspace`; advanced users can still enter an absolute server path if it is inside `allowed_paths`.
 
 ## MVP Scope
 

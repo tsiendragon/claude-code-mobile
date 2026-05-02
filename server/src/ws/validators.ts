@@ -3,6 +3,8 @@ import { PROTOCOL_VERSION, type RequestEnvelope } from "../types/protocol.js";
 const requestTypes = new Set([
   "auth",
   "ping",
+  "workspace.list",
+  "workspace.create",
   "session.list",
   "session.run",
   "session.attach",
@@ -40,9 +42,17 @@ export function validateRequest(input: unknown, maxPromptBytes: number): Validat
     return invalid("valid session_id is required");
   }
 
+  if (input.type === "workspace.create") {
+    if (typeof input.name !== "string" || input.name.trim().length === 0) {
+      return invalid("workspace name is required");
+    }
+  }
+
   if (input.type === "session.run") {
     if (typeof input.name !== "string" || input.name.length === 0) return invalid("name is required");
-    if (typeof input.cwd !== "string" || input.cwd.length === 0) return invalid("cwd is required");
+    const hasWorkspaceId = typeof input.workspace_id === "string" && input.workspace_id.length > 0;
+    const hasCwd = typeof input.cwd === "string" && input.cwd.length > 0;
+    if (hasWorkspaceId === hasCwd) return invalid("exactly one of workspace_id or cwd is required");
   }
 
   if (input.type === "message.send") {

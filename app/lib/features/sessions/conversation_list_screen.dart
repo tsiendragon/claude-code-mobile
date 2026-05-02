@@ -60,7 +60,12 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
         child: ListView(
           padding: const EdgeInsets.only(bottom: 88),
           children: [
-            _ConnectionBanner(state: client.state, error: client.lastError),
+            _ConnectionBanner(
+              state: client.state,
+              error: client.lastError,
+              onReconnect: _reconnect,
+              onSettings: _openServerSettings,
+            ),
             if (sessions.error != null)
               Padding(
                 padding: const EdgeInsets.all(16),
@@ -89,7 +94,7 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
                     ),
                   );
                 },
-                onKill: () => sessions.kill(session.sessionId),
+                onKill: () => _confirmKill(session),
               ),
           ],
         ),
@@ -97,74 +102,28 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
     );
   }
 
-  Future<void> _showCreateSessionDialog() async {
-    final nameController = TextEditingController();
-    final cwdController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
+  Future<void> _reconnect() async {
+    try {
+      await context.read<BridgeClient>().connect();
+      if (mounted) await context.read<SessionController>().load();
+    } catch (_) {
+      if (mounted) setState(() {});
+    }
+  }
 
+  void _openServerSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const ServerConfigScreen(),
+      ),
+    );
+  }
+
+  Future<void> _showCreateSessionDialog() async {
     final created = await showDialog<String?>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('New session'),
-          content: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(
-                  controller: nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Name',
-                    prefixIcon: Icon(Icons.terminal),
-                  ),
-                  validator: (value) =>
-                      (value ?? '').trim().isEmpty ? 'Name is required.' : null,
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: cwdController,
-                  decoration: const InputDecoration(
-                    labelText: 'Working directory',
-                    prefixIcon: Icon(Icons.folder),
-                  ),
-                  validator: (value) {
-                    final text = (value ?? '').trim();
-                    if (text.isEmpty) return 'Working directory is required.';
-                    if (!text.startsWith('/')) return 'Use an absolute path.';
-                    return null;
-                  },
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton.icon(
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('Create'),
-              onPressed: () async {
-                if (!formKey.currentState!.validate()) return;
-                final sessionId =
-                    await context.read<SessionController>().createSession(
-                          name: nameController.text.trim(),
-                          cwd: cwdController.text.trim(),
-                        );
-                if (context.mounted) {
-                  Navigator.of(context).pop(sessionId);
-                }
-              },
-            ),
-          ],
-        );
-      },
+      builder: (_) => const _CreateSessionDialog(),
     );
-
-    nameController.dispose();
-    cwdController.dispose();
     if (!mounted || created == null || created.isEmpty) return;
 
     final sessions = context.read<SessionController>().sessions;
@@ -175,19 +134,455 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
         break;
       }
     }
-    if (session != null) {
+    final selectedSession = session;
+    if (selectedSession != null) {
       Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => ChatScreen(session: session)),
+        MaterialPageRoute<void>(
+          builder: (_) => ChatScreen(session: selectedSession),
+        ),
       );
+    }
+  }
+
+  Future<void> _confirmKill(SessionSummary session) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Kill session?'),
+        content: Text(
+          [
+            session.name,
+            if (session.cwd != null && session.cwd!.isNotEmpty) session.cwd!,
+          ].join('\n'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.stop),
+            label: const Text('Kill'),
+            onPressed: () => Navigator.of(context).pop(true),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await context.read<SessionController>().kill(session.sessionId);
     }
   }
 }
 
+enum _WorkspaceMode { existing, create }
+
+class _CreateSessionDialog extends StatefulWidget {
+  const _CreateSessionDialog();
+
+  @override
+  State<_CreateSessionDialog> createState() => _CreateSessionDialogState();
+}
+
+class _CreateSessionDialogState extends State<_CreateSessionDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _sessionNameController = TextEditingController();
+  final _workspaceNameController = TextEditingController();
+  final _cwdController = TextEditingController();
+
+  _WorkspaceMode _workspaceMode = _WorkspaceMode.existing;
+  List<WorkspaceSummary> _workspaces = const [];
+  String? _selectedWorkspaceId;
+  bool _useManualPath = false;
+  bool _showAdvanced = false;
+  bool _isLoadingWorkspaces = true;
+  bool _isSubmitting = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadWorkspaces());
+  }
+
+  @override
+  void dispose() {
+    _sessionNameController.dispose();
+    _workspaceNameController.dispose();
+    _cwdController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New session'),
+      content: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_isLoadingWorkspaces)
+                const LinearProgressIndicator()
+              else
+                _buildTargetField(),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _sessionNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Session name (optional)',
+                  prefixIcon: Icon(Icons.terminal),
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                      if (_useManualPath && _workspaces.isEmpty)
+                        TextButton.icon(
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry workspaces'),
+                          onPressed:
+                              _isSubmitting ? null : () => _loadWorkspaces(),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          icon: _isSubmitting
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.play_arrow),
+          label: const Text('Create'),
+          onPressed:
+              _isSubmitting || _isLoadingWorkspaces ? null : _createSession,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTargetField() {
+    final selected = _selectedWorkspace;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (!_useManualPath) ...[
+          ToggleButtons(
+            constraints: const BoxConstraints(minHeight: 40, minWidth: 112),
+            isSelected: [
+              _workspaceMode == _WorkspaceMode.existing,
+              _workspaceMode == _WorkspaceMode.create,
+            ],
+            onPressed: _isSubmitting
+                ? null
+                : (index) {
+                    setState(() {
+                      _workspaceMode = _WorkspaceMode.values[index];
+                      if (_workspaceMode == _WorkspaceMode.create) {
+                        _selectedWorkspaceId = null;
+                      } else if (_workspaces.isNotEmpty) {
+                        _selectedWorkspaceId ??= _workspaces.first.id;
+                      }
+                    });
+                  },
+            children: const [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.folder_open, size: 18),
+                  SizedBox(width: 6),
+                  Text('Existing'),
+                ],
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.create_new_folder, size: 18),
+                  SizedBox(width: 6),
+                  Text('New'),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_workspaceMode == _WorkspaceMode.existing)
+            DropdownButtonFormField<String>(
+              initialValue: _selectedWorkspaceId,
+              items: [
+                for (final workspace in _workspaces)
+                  DropdownMenuItem(
+                    value: workspace.id,
+                    child: Text(
+                      workspace.name,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              decoration: const InputDecoration(
+                labelText: 'Workspace',
+                prefixIcon: Icon(Icons.folder_open),
+              ),
+              validator: (_) => _selectedWorkspaceId == null
+                  ? 'Choose or create a workspace.'
+                  : null,
+              onChanged: _isSubmitting
+                  ? null
+                  : (value) => setState(() => _selectedWorkspaceId = value),
+            )
+          else
+            TextFormField(
+              controller: _workspaceNameController,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Project folder',
+                prefixIcon: Icon(Icons.create_new_folder),
+              ),
+              validator: (value) {
+                final text = (value ?? '').trim();
+                if (text.isEmpty) return 'Folder name is required.';
+                if (!RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$').hasMatch(text)) {
+                  return 'Use letters, numbers, dots, dashes, or underscores.';
+                }
+                return null;
+              },
+            ),
+          const SizedBox(height: 8),
+          _PathPreview(
+            icon: Icons.folder,
+            label: _workspaceMode == _WorkspaceMode.existing
+                ? 'Server path'
+                : 'Creates under server workspace root',
+            value: _workspaceMode == _WorkspaceMode.existing
+                ? selected?.path
+                : '<workspace root>/${_workspaceNamePreview()}',
+          ),
+        ],
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          title: const Text('Advanced path'),
+          childrenPadding: EdgeInsets.zero,
+          initiallyExpanded: _showAdvanced,
+          onExpansionChanged: (expanded) {
+            setState(() => _showAdvanced = _useManualPath || expanded);
+          },
+          children: [
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Use a server path'),
+              subtitle: const Text('Must be inside the server allowed paths.'),
+              value: _useManualPath,
+              onChanged: _isSubmitting
+                  ? null
+                  : (value) {
+                      setState(() {
+                        _useManualPath = value;
+                        if (value) _showAdvanced = true;
+                      });
+                    },
+            ),
+          ],
+        ),
+        if (_useManualPath)
+          TextFormField(
+            controller: _cwdController,
+            decoration: const InputDecoration(
+              labelText: 'Working directory',
+              prefixIcon: Icon(Icons.edit_location_alt),
+            ),
+            validator: (value) {
+              final text = (value ?? '').trim();
+              if (!_useManualPath) return null;
+              if (text.isEmpty) return 'Working directory is required.';
+              if (!text.startsWith('/') &&
+                  !text.startsWith('~/') &&
+                  text != '~') {
+                return 'Use /path or ~/path.';
+              }
+              return null;
+            },
+          ),
+      ],
+    );
+  }
+
+  Future<void> _loadWorkspaces() async {
+    setState(() {
+      _isLoadingWorkspaces = true;
+      _error = null;
+    });
+
+    try {
+      final workspaces = await context.read<BridgeClient>().listWorkspaces();
+      if (!mounted) return;
+      setState(() {
+        _workspaces = workspaces;
+        _selectedWorkspaceId = workspaces.isEmpty ? null : workspaces.first.id;
+        if (workspaces.isEmpty) _workspaceMode = _WorkspaceMode.create;
+        _useManualPath = false;
+        _showAdvanced = false;
+      });
+    } on BridgeException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.message;
+        _useManualPath = true;
+        _showAdvanced = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingWorkspaces = false);
+      }
+    }
+  }
+
+  Future<void> _createSession() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() {
+      _isSubmitting = true;
+      _error = null;
+    });
+
+    try {
+      String? workspaceId;
+      String? cwd;
+      final bridgeClient = context.read<BridgeClient>();
+      final sessionController = context.read<SessionController>();
+
+      if (_useManualPath) {
+        cwd = _cwdController.text.trim();
+      } else {
+        switch (_workspaceMode) {
+          case _WorkspaceMode.existing:
+            workspaceId = _selectedWorkspaceId;
+            break;
+          case _WorkspaceMode.create:
+            final workspace = await bridgeClient.createWorkspace(
+              _workspaceNameController.text.trim(),
+            );
+            workspaceId = workspace.id;
+            break;
+        }
+      }
+
+      final sessionId = await sessionController.createSession(
+            name: _resolvedSessionName(),
+            workspaceId: workspaceId,
+            cwd: cwd,
+          );
+      if (!mounted) return;
+      if (sessionId == null || sessionId.isEmpty) {
+        setState(() {
+          _error = sessionController.error ?? 'Session creation failed.';
+        });
+        return;
+      }
+      Navigator.of(context).pop(sessionId);
+    } on BridgeException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  WorkspaceSummary? get _selectedWorkspace {
+    for (final workspace in _workspaces) {
+      if (workspace.id == _selectedWorkspaceId) return workspace;
+    }
+    return null;
+  }
+
+  String _resolvedSessionName() {
+    final explicit = _sessionNameController.text.trim();
+    if (explicit.isNotEmpty) return explicit;
+    if (_useManualPath) {
+      final path = _cwdController.text.trim();
+      final segments = path.split('/').where((segment) => segment.isNotEmpty);
+      return segments.isEmpty ? 'Session' : segments.last;
+    }
+    if (_workspaceMode == _WorkspaceMode.create) {
+      return _workspaceNameController.text.trim();
+    }
+    return _selectedWorkspace?.name ?? 'Session';
+  }
+
+  String _workspaceNamePreview() {
+    final text = _workspaceNameController.text.trim();
+    return text.isEmpty ? '<project>' : text;
+  }
+}
+
+class _PathPreview extends StatelessWidget {
+  const _PathPreview({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String? value;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = value == null || value!.isEmpty ? 'No path selected' : value!;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: Theme.of(context).textTheme.labelMedium),
+              SelectableText(
+                text,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _ConnectionBanner extends StatelessWidget {
-  const _ConnectionBanner({required this.state, this.error});
+  const _ConnectionBanner({
+    required this.state,
+    this.error,
+    this.onReconnect,
+    this.onSettings,
+  });
 
   final BridgeConnectionState state;
   final String? error;
+  final VoidCallback? onReconnect;
+  final VoidCallback? onSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -201,13 +596,42 @@ class _ConnectionBanner extends StatelessWidget {
       BridgeConnectionState.disconnected => 'Disconnected',
     };
 
+    final connected = state == BridgeConnectionState.connected;
+    final canAct = state == BridgeConnectionState.disconnected ||
+        state == BridgeConnectionState.error;
     return Container(
       width: double.infinity,
-      color: state == BridgeConnectionState.connected
-          ? colorScheme.secondaryContainer
-          : colorScheme.errorContainer,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Text(text),
+      color:
+          connected ? colorScheme.secondaryContainer : colorScheme.errorContainer,
+      padding: const EdgeInsets.only(left: 16, right: 8, top: 6, bottom: 6),
+      child: Row(
+        children: [
+          Icon(
+            connected ? Icons.cloud_done_outlined : Icons.cloud_off_outlined,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (canAct) ...[
+            IconButton(
+              tooltip: 'Reconnect',
+              icon: const Icon(Icons.refresh),
+              onPressed: onReconnect,
+            ),
+            IconButton(
+              tooltip: 'Server settings',
+              icon: const Icon(Icons.settings),
+              onPressed: onSettings,
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -225,13 +649,25 @@ class _SessionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final badge = _statusBadgeText(session);
+    final path = _shortPath(session.cwd);
     return ListTile(
       leading: Icon(_stateIcon(session.state)),
-      title: Text(session.name),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              session.name,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (badge != null) _StatusBadge(text: badge),
+        ],
+      ),
       subtitle: Text(
         [
           session.state.name,
-          if (session.cwd != null) session.cwd!,
+          if (path != null) path,
           if (session.lastMessage != null) session.lastMessage!,
         ].join(' · '),
         maxLines: 2,
@@ -262,5 +698,47 @@ class _SessionTile extends StatelessWidget {
       case SessionState.unknown:
         return Icons.help_outline;
     }
+  }
+
+  String? _statusBadgeText(SessionSummary session) {
+    if (session.state == SessionState.approval) return 'Needs approval';
+    if (session.state == SessionState.choosing) return 'Needs choice';
+    if (session.needsAttention) return 'Needs attention';
+    return null;
+  }
+
+  String? _shortPath(String? cwd) {
+    if (cwd == null || cwd.isEmpty) return null;
+    const marker = '/workspace/';
+    final index = cwd.indexOf(marker);
+    if (index >= 0) {
+      return '~/workspace/${cwd.substring(index + marker.length)}';
+    }
+    final segments = cwd.split('/').where((segment) => segment.isNotEmpty).toList();
+    if (segments.length <= 3) return cwd;
+    return '.../${segments.sublist(segments.length - 3).join('/')}';
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(left: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.labelSmall,
+      ),
+    );
   }
 }

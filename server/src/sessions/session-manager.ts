@@ -1,11 +1,19 @@
 import { randomBytes, createHash } from "node:crypto";
+import path from "node:path";
 import type { BridgeConfig } from "../config.js";
 import type { CccClient } from "../ccc/ccc-client.js";
-import { assertAllowedCwd } from "../security/paths.js";
+import { assertAllowedCwd, isPathInside } from "../security/paths.js";
 import type { ApprovalAction, ApprovalRecord, SessionRecord, SessionState } from "../types/domain.js";
 import type { SessionSummary } from "../types/protocol.js";
+import type { WorkspaceService } from "../workspaces/workspace-service.js";
 import { InMemoryEventStore } from "./event-store.js";
 import { canPerform, transitionState } from "./state-machine.js";
+
+export type SessionRunInput = {
+  name: string;
+  cwd?: string;
+  workspaceId?: string;
+};
 
 export class SessionManager {
   private readonly sessions = new Map<string, SessionRecord>();
@@ -16,6 +24,7 @@ export class SessionManager {
   constructor(
     private readonly config: BridgeConfig,
     private readonly ccc: CccClient,
+    private readonly workspaces: WorkspaceService,
     private readonly events: InMemoryEventStore
   ) {}
 
@@ -27,20 +36,37 @@ export class SessionManager {
     const result = await this.ccc.listSessions();
     if (result.ok) {
       for (const cccSession of result.data) {
-        this.ensureSession(cccSession.name, cccSession.cwd ?? "", cccSession.state ?? "ready");
+        if (!cccSession.cwd) continue;
+        try {
+          const realCwd = await assertAllowedCwd(cccSession.cwd, this.config.allowedPaths, {
+            allowHiddenCwd: this.config.allowHiddenCwd
+          });
+          this.ensureSession(cccSession.name, realCwd, cccSession.state ?? "ready");
+        } catch {
+          continue;
+        }
       }
     }
     return [...this.sessions.values()].map(toSummary);
   }
 
-  async run(name: string, cwd: string): Promise<SessionRecord> {
-    const realCwd = await assertAllowedCwd(cwd, this.config.allowedPaths, {
-      allowHiddenCwd: this.config.allowHiddenCwd
-    });
+  async run(input: SessionRunInput): Promise<SessionRecord> {
+    const realCwd = input.workspaceId
+      ? await this.workspaces.resolveWorkspaceCwd(input.workspaceId)
+      : await this.resolveManualCwd(input.cwd);
+    const name = input.name;
     const cccName = `${name}-${randomBytes(4).toString("hex")}`;
     const result = await this.ccc.runSession(cccName, realCwd);
     if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
     return this.ensureSession(cccName, realCwd, "ready", name);
+  }
+
+  listWorkspaces() {
+    return this.workspaces.list();
+  }
+
+  createWorkspace(name: string) {
+    return this.workspaces.create(name);
   }
 
   async attach(sessionId: string) {
@@ -102,6 +128,7 @@ export class SessionManager {
     const pending = session.pendingApproval;
     if (!pending || pending.approvalId !== approvalId) throw new Error("APPROVAL_NOT_FOUND");
     if (new Date(pending.expiresAt).getTime() <= Date.now()) throw new Error("APPROVAL_EXPIRED");
+    this.assertApprovalPathsInSession(session, pending);
     const cccAction = normalizeApprovalAction(action);
     const result = await this.ccc.approve(session.cccName, cccAction);
     if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
@@ -229,6 +256,30 @@ export class SessionManager {
     session.lastSeq = stored.seq;
     session.updatedAt = stored.created_at;
     return stored;
+  }
+
+  private async resolveManualCwd(cwd: string | undefined): Promise<string> {
+    if (!this.config.allowManualCwd) {
+      throw new Error("PATH_NOT_ALLOWED: manual cwd is disabled");
+    }
+    if (!cwd) {
+      throw new Error("PATH_NOT_ALLOWED: cwd is required");
+    }
+    return assertAllowedCwd(cwd, this.config.allowedPaths, {
+      allowHiddenCwd: this.config.allowHiddenCwd
+    });
+  }
+
+  private assertApprovalPathsInSession(session: SessionRecord, approval: ApprovalRecord) {
+    for (const rawPath of approval.paths) {
+      if (rawPath.trim().length === 0) continue;
+      const candidate = path.isAbsolute(rawPath)
+        ? path.resolve(rawPath)
+        : path.resolve(session.cwd, rawPath);
+      if (!isPathInside(candidate, session.cwd)) {
+        throw new Error("PATH_NOT_ALLOWED: approval path is outside session cwd");
+      }
+    }
   }
 }
 

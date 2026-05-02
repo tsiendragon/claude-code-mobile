@@ -31,7 +31,7 @@ class ApprovalCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    approval.operationKind,
+                    _operationLabel(approval.operationKind),
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
@@ -70,23 +70,104 @@ class ApprovalCard extends StatelessWidget {
               runSpacing: 8,
               children: [
                 for (final action in approval.actions)
-                  FilledButton.icon(
-                    icon: isSubmitting
-                        ? const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Icon(_actionIcon(action)),
-                    label: Text(action),
-                    onPressed:
-                        isSubmitting ? null : () => onAction(action),
-                  ),
+                  _isRejectAction(action)
+                      ? OutlinedButton.icon(
+                          icon: isSubmitting
+                              ? const SizedBox.square(
+                                  dimension: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Icon(_actionIcon(action)),
+                          label: Text(_actionLabel(action)),
+                          onPressed: isSubmitting
+                              ? null
+                              : () => _submitAction(context, action),
+                        )
+                      : FilledButton.icon(
+                          icon: isSubmitting
+                              ? const SizedBox.square(
+                                  dimension: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Icon(_actionIcon(action)),
+                          label: Text(_actionLabel(action)),
+                          onPressed: isSubmitting
+                              ? null
+                              : () => _submitAction(context, action),
+                        ),
               ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _submitAction(BuildContext context, String action) async {
+    if (action == 'always') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Always approve?'),
+          content: const Text(
+            'This applies only to matching low-risk actions in this session.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              icon: const Icon(Icons.done_all),
+              label: const Text('Always'),
+              onPressed: () => Navigator.of(context).pop(true),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    onAction(action);
+  }
+
+  String _operationLabel(String operationKind) {
+    switch (operationKind) {
+      case 'file_edit':
+        return 'File change approval';
+      case 'command':
+        return 'Command approval';
+      case 'choice':
+        return 'Choice required';
+      default:
+        return 'Approval required';
+    }
+  }
+
+  String _actionLabel(String action) {
+    switch (action) {
+      case 'approve':
+      case 'yes':
+      case 'accept':
+        return 'Accept';
+      case 'reject':
+      case 'no':
+      case 'deny':
+        return 'Reject';
+      case 'always':
+        return 'Always for this session';
+      case 'choice':
+        return 'Choose';
+      default:
+        return action;
+    }
+  }
+
+  bool _isRejectAction(String action) {
+    return action == 'reject' || action == 'no' || action == 'deny';
   }
 
   IconData _actionIcon(String action) {

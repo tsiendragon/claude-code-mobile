@@ -19,7 +19,8 @@ export type AuthRequest = RequestEnvelope & {
 export type SessionRunRequest = RequestEnvelope & {
   type: "session.run";
   name: string;
-  cwd: string;
+  cwd?: string;
+  workspace_id?: string;
 };
 
 export type SessionIdRequest = RequestEnvelope & {

@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
+import path from "node:path";
 import type { LogLevel } from "./logger.js";
+import { expandHome } from "./security/paths.js";
 
 export type BridgeConfig = {
   host: string;
@@ -8,6 +10,8 @@ export type BridgeConfig = {
   tokenEnv: string;
   token: string;
   allowedPaths: string[];
+  workspaceRoot: string;
+  allowManualCwd: boolean;
   cccBin: string;
   pollIntervalMs: number;
   eventBufferSize: number;
@@ -26,6 +30,8 @@ type RawConfig = {
   token?: string;
   token_env?: string;
   allowed_paths?: string[];
+  workspace_root?: string;
+  allow_manual_cwd?: boolean;
   ccc_bin?: string;
   poll_interval_ms?: number;
   event_buffer_size?: number;
@@ -42,7 +48,8 @@ export async function loadConfig(configPath?: string): Promise<BridgeConfig> {
   const raw = configPath ? await readJsonConfig(configPath) : {};
   const tokenEnv = raw.token_env ?? "CCM_TOKEN";
   const token = raw.token ?? process.env[tokenEnv] ?? generateDevToken();
-  const allowedPaths = raw.allowed_paths ?? [];
+  const workspaceRoot = expandHome(raw.workspace_root ?? process.env.CCM_WORKSPACE_ROOT ?? "~/workspace");
+  const allowedPaths = (raw.allowed_paths ?? [workspaceRoot]).map(expandHome);
 
   const config: BridgeConfig = {
     host: raw.host ?? process.env.CCM_HOST ?? "127.0.0.1",
@@ -50,6 +57,8 @@ export async function loadConfig(configPath?: string): Promise<BridgeConfig> {
     tokenEnv,
     token,
     allowedPaths,
+    workspaceRoot,
+    allowManualCwd: raw.allow_manual_cwd ?? true,
     cccBin: raw.ccc_bin ?? process.env.CCM_CCC_BIN ?? "ccc",
     pollIntervalMs: raw.poll_interval_ms ?? 1000,
     eventBufferSize: raw.event_buffer_size ?? 200,
@@ -75,6 +84,17 @@ function validateConfig(config: BridgeConfig) {
   }
   if (config.allowedPaths.length === 0) {
     throw new Error("allowed_paths is required");
+  }
+  if (!path.isAbsolute(config.workspaceRoot)) {
+    throw new Error("workspace_root must be absolute or start with ~");
+  }
+  if (config.workspaceRoot === "/") {
+    throw new Error("workspace_root must not be /");
+  }
+  for (const allowedPath of config.allowedPaths) {
+    if (!path.isAbsolute(allowedPath)) {
+      throw new Error("allowed_paths must be absolute or start with ~");
+    }
   }
   if (config.allowedPaths.includes("/")) {
     throw new Error("allowed_paths must not include /");

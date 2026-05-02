@@ -7,6 +7,7 @@ import { WsGateway } from "./ws/gateway.js";
 import { InMemoryEventStore } from "./sessions/event-store.js";
 import { SessionManager } from "./sessions/session-manager.js";
 import { StatePoller } from "./sessions/state-poller.js";
+import { WorkspaceService } from "./workspaces/workspace-service.js";
 
 const configPath = parseConfigPath(process.argv.slice(2));
 const config = await loadConfig(configPath);
@@ -25,7 +26,8 @@ const httpServer = http.createServer((_request, response) => {
 
 const events = new InMemoryEventStore(config.eventBufferSize);
 const ccc = new CccClient(config);
-const sessions = new SessionManager(config, ccc, events);
+const workspaces = new WorkspaceService(config);
+const sessions = new SessionManager(config, ccc, workspaces, events);
 const poller = new StatePoller(sessions, logger, config.pollIntervalMs);
 sessions.setPoller(poller);
 const auth = new AuthService(config);

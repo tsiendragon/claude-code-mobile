@@ -123,11 +123,21 @@ export class WsGateway {
   private async handleRequest(socket: WebSocket, request: RequestEnvelope) {
     try {
       switch (request.type) {
+        case "workspace.list":
+          this.send(socket, ok(request.id, { workspaces: await this.sessions.listWorkspaces() }));
+          break;
+        case "workspace.create":
+          this.send(socket, ok(request.id, { workspace: await this.sessions.createWorkspace(String(request.name)) }));
+          break;
         case "session.list":
           this.send(socket, ok(request.id, { sessions: await this.sessions.list() }));
           break;
         case "session.run": {
-          const session = await this.sessions.run(String(request.name), String(request.cwd));
+          const session = await this.sessions.run({
+            name: String(request.name),
+            workspaceId: typeof request.workspace_id === "string" ? request.workspace_id : undefined,
+            cwd: typeof request.cwd === "string" ? request.cwd : undefined
+          });
           this.send(socket, ok(request.id, {
             session_id: session.sessionId,
             name: session.name,
@@ -210,7 +220,8 @@ function normalizeErrorCode(message: string): string {
     "EVENT_GAP",
     "RATE_LIMITED",
     "MESSAGE_TOO_LARGE",
-    "PATH_NOT_ALLOWED"
+    "PATH_NOT_ALLOWED",
+    "WORKSPACE_INVALID"
   ];
   return known.find((code) => message.includes(code)) ?? "INVALID_REQUEST";
 }

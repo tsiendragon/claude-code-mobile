@@ -33,10 +33,15 @@ class SessionController extends ChangeNotifier {
 
   Future<String?> createSession({
     required String name,
-    required String cwd,
+    String? cwd,
+    String? workspaceId,
   }) async {
     try {
-      final sessionId = await _client.runSession(name: name, cwd: cwd);
+      final sessionId = await _client.runSession(
+        name: name,
+        cwd: cwd,
+        workspaceId: workspaceId,
+      );
       await load();
       return sessionId;
     } on BridgeException catch (error) {

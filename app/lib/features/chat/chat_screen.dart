@@ -25,7 +25,6 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatItem> _items = const [];
   PendingApproval? _pendingApproval;
   String? _latestOutputSnapshot;
-  int _lastSeq = 0;
   bool _isLoading = true;
   bool _isSending = false;
   bool _isApproving = false;
@@ -36,7 +35,6 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _session = widget.session;
-    _lastSeq = widget.session.lastSeq;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _attach();
       final client = context.read<BridgeClient>();
@@ -59,6 +57,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final canInterrupt = session.state == SessionState.thinking ||
         session.state == SessionState.approval ||
         session.state == SessionState.choosing;
+    final inputHint = _inputHint(session.state);
 
     return Scaffold(
       appBar: AppBar(
@@ -127,30 +126,43 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      minLines: 1,
-                      maxLines: 5,
-                      decoration: const InputDecoration(
-                        hintText: 'Send prompt',
-                        border: OutlineInputBorder(),
-                      ),
-                      onSubmitted: (_) => canSend ? _send() : null,
+                  if (inputHint != null) ...[
+                    Text(
+                      inputHint,
+                      style: Theme.of(context).textTheme.labelMedium,
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    tooltip: 'Send',
-                    icon: _isSending
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.send),
-                    onPressed: canSend ? _send : null,
+                    const SizedBox(height: 6),
+                  ],
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _messageController,
+                          enabled: canSend,
+                          minLines: 1,
+                          maxLines: 5,
+                          decoration: const InputDecoration(
+                            hintText: 'Send prompt',
+                            border: OutlineInputBorder(),
+                          ),
+                          onSubmitted: (_) => canSend ? _send() : null,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        tooltip: 'Send',
+                        icon: _isSending
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.send),
+                        onPressed: canSend ? _send : null,
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -173,7 +185,6 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _session = snapshot.session;
         _items = snapshot.items;
-        _lastSeq = snapshot.lastSeq;
         _pendingApproval = snapshot.pendingApproval;
         _latestOutputSnapshot = snapshot.latestOutputSnapshot;
         _hasEventGap = snapshot.hasEventGap;
@@ -265,7 +276,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final event = envelope.event;
     setState(() {
-      _lastSeq = envelope.seq;
       switch (event.kind) {
         case 'state_changed':
           _session = SessionSummary(
@@ -362,6 +372,25 @@ class _ChatScreenState extends State<ChatScreen> {
         curve: Curves.easeOut,
       );
     });
+  }
+
+  String? _inputHint(SessionState state) {
+    switch (state) {
+      case SessionState.ready:
+        return null;
+      case SessionState.thinking:
+        return 'Assistant is working. You can interrupt or wait.';
+      case SessionState.approval:
+        return 'Approval is required before sending another prompt.';
+      case SessionState.choosing:
+        return 'A choice is required before sending another prompt.';
+      case SessionState.error:
+        return 'Session is in error. Refresh or start a new session.';
+      case SessionState.ended:
+        return 'Session has ended.';
+      case SessionState.unknown:
+        return 'Session state is unknown. Refresh before sending.';
+    }
   }
 }
 

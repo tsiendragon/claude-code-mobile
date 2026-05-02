@@ -37,6 +37,18 @@ void main() {
     expect(envelope.event.kind, 'state_changed');
   });
 
+  test('parses workspace summaries', () {
+    final workspace = WorkspaceSummary.fromJson({
+      'id': 'demo-app',
+      'name': 'Demo App',
+      'path': '/home/user/workspace/demo-app',
+    });
+
+    expect(workspace.id, 'demo-app');
+    expect(workspace.name, 'Demo App');
+    expect(workspace.path, '/home/user/workspace/demo-app');
+  });
+
   test('builds chat snapshot from attach recent events', () {
     final snapshot = ChatStateSnapshot.fromAttachResponse({
       'session': {
