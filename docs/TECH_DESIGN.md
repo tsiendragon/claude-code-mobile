@@ -118,7 +118,9 @@ MVP 可以先实现 `files/` 空壳，Phase 2 再启用文件读取。
   "host": "127.0.0.1",
   "port": 8900,
   "token_env": "CCM_TOKEN",
-  "allowed_paths": ["/home/user/projects"],
+  "workspace_root": "~/workspace",
+  "allowed_paths": ["~/workspace"],
+  "allow_manual_cwd": true,
   "ccc_bin": "ccc",
   "poll_interval_ms": 1000,
   "event_buffer_size": 200,
@@ -126,6 +128,7 @@ MVP 可以先实现 `files/` 空壳，Phase 2 再启用文件读取。
   "max_ws_message_bytes": 262144,
   "max_event_bytes": 524288,
   "allow_wide_bind": false,
+  "allow_hidden_cwd": false,
   "log_level": "info"
 }
 ```
@@ -135,7 +138,9 @@ MVP 可以先实现 `files/` 空壳，Phase 2 再启用文件读取。
 - 默认监听 `127.0.0.1:8900`。
 - 监听 `0.0.0.0` 时必须设置 `allow_wide_bind: true`，并打印高风险警告。
 - 如果未提供 Token，开发模式可以交互式生成并打印一次；生产部署必须从配置文件或环境变量读取。
-- `allowed_paths` 必填，禁止默认 `/`。
+- `workspace_root` 默认 `~/workspace`，App 普通创建流程只允许创建其一级子目录。
+- `allowed_paths` 默认等于 `workspace_root`，禁止设置为 `/`。
+- 高级 `cwd` 只有在 `allow_manual_cwd: true` 时可用，且必须解析在 `allowed_paths` 内。
 - Bridge 检测到 root 运行时直接退出。
 
 ### 3.4 核心模块
@@ -189,6 +194,7 @@ MVP 不做多用户，不做 refresh token。
 - 维护 `session_id -> SessionRecord`。
 - 把 ccc/tmux 会话映射到 Bridge session。
 - 处理 `session.list`、`session.run`、`session.attach`、`session.kill`。
+- 处理 `workspace.list`、`workspace.create`，并把 `workspace_id` 解析为服务端 cwd。
 - 启动和停止状态轮询。
 
 SessionRecord:
@@ -226,7 +232,7 @@ type SessionRecord = {
 
 ```text
 session.list      -> ccc ps --json
-session.run       -> ccc run <name> --cwd <cwd> --claude
+session.run       -> ccc run <name> --cwd <resolved workspace/cwd> --claude
 session.kill      -> ccc kill <name>
 message.send      -> ccc send <name> <text> --no-wait
 message.approve   -> ccc approve <name> <action>
@@ -739,14 +745,17 @@ MVP 最低要求：
 
 ### 6.4 Path Security
 
-虽然文件查看不进 MVP，`session.run.cwd` 仍必须校验。
+虽然文件查看不进 MVP，`session.run` 的工作目录仍必须校验。
 
 规则：
 
-- `cwd` 必须是绝对路径。
-- `realpath(cwd)` 必须位于 `allowed_paths` 内。
+- App 普通流程传 `workspace_id`，Bridge 将其解析为 `workspace_root/<workspace_id>`。
+- `workspace_id` 只能是单段目录名，禁止路径分隔符，默认禁止隐藏目录名。
+- 高级流程传 `cwd`，该值必须是服务端机器上的绝对路径。
+- `session.run` 必须传且只传 `workspace_id` 或 `cwd` 之一。
+- `realpath(workspace cwd 或高级 cwd)` 必须位于 `allowed_paths` 内。
 - 禁止 symlink 逃逸。
-- 默认拒绝隐藏目录作为 cwd，除非配置显式允许。
+- 默认拒绝隐藏目录作为 cwd/workspace，除非配置显式允许。
 
 ## 7. 部署设计
 
@@ -830,15 +839,16 @@ ws://100.x.y.z:8900
 
 在真实机器上安装 ccc、tmux、Claude Code，执行：
 
-1. `session.run` 创建会话。
-2. `message.send` 发送 prompt。
-3. `ccc read --json` 轮询 60 秒。
-4. 记录输出是否有稳定 message boundary。
-5. 触发一次 approval。
-6. 验证 approval 内容是否可结构化。
-7. 执行 approve。
-8. 验证状态回到 thinking/ready。
-9. 断开 Bridge 重连，验证 attach snapshot。
+1. `workspace.create` 创建测试工作区。
+2. `session.run` 使用 `workspace_id` 创建会话。
+3. `message.send` 发送 prompt。
+4. `ccc read --json` 轮询 60 秒。
+5. 记录输出是否有稳定 message boundary。
+6. 触发一次 approval。
+7. 验证 approval 内容是否可结构化。
+8. 执行 approve。
+9. 验证状态回到 thinking/ready。
+10. 断开 Bridge 重连，验证 attach snapshot。
 
 产出 `docs/phase0-ccc-findings.md`，明确使用事件流模式还是快照模式。
 
@@ -952,4 +962,3 @@ MVP 可先只通过日志观察。后续可加入：
 - Bridge 是否需要在 MVP 持久化 session_id 到磁盘，以便重启后保留同一会话身份。
 - Flutter MVP 使用 Provider 还是 Riverpod。
 - Android 后台恢复是否只做前台重连，还是需要通知能力提前进入 Phase 2。
-

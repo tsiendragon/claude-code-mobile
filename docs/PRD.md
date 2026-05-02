@@ -462,18 +462,20 @@ MVP 文档必须覆盖从新服务器到 App 连接成功的最短路径。
 1. 安装 Node.js、tmux、ccc 和至少一个 AI 后端 CLI。
 2. 安装或下载 Bridge Server。
 3. 创建 Bridge 配置文件。
-4. 配置 `allowed_paths`，例如 `/home/user/projects`。
-5. 生成或填写 Token。
-6. 选择连接方式：Caddy + WSS 或 Tailscale。
-7. 启动 Bridge Server。
-8. 在 App 中填写 Server URL 和 Token。
-9. 执行连接测试。
+4. 配置 `workspace_root`，默认可以使用 `~/workspace`。
+5. 如需高级绝对路径，配置 `allowed_paths`，例如 `["~/workspace", "/home/user/projects"]`。
+6. 生成或填写 Token。
+7. 选择连接方式：Caddy + WSS 或 Tailscale。
+8. 启动 Bridge Server。
+9. 在 App 中填写 Server URL 和 Token。
+10. 执行连接测试。
 
 Bridge 启动时必须打印：
 
 - 当前监听地址。
 - 是否启用 TLS 终结代理模式。
 - 是否允许 `ws://`。
+- `workspace_root` 摘要。
 - `allowed_paths` 摘要。
 - Token 来源：自动生成、配置文件或环境变量。
 - App 可填写的示例 Server URL。
@@ -687,10 +689,17 @@ Phase 2 支持从消息中的文件路径打开文件。
 
 ```json
 { "type": "session.list", "id": "req_1" }
-{ "type": "session.run", "id": "req_2", "name": "myproject", "cwd": "/home/user/project", "backend": "claude" }
-{ "type": "session.kill", "id": "req_3", "session_id": "sess_abc123" }
-{ "type": "session.attach", "id": "req_4", "session_id": "sess_abc123" }
+{ "type": "workspace.list", "id": "req_2" }
+{ "type": "workspace.create", "id": "req_3", "name": "myproject" }
+{ "type": "session.run", "id": "req_4", "name": "myproject", "workspace_id": "myproject", "backend": "claude" }
+{ "type": "session.run", "id": "req_5", "name": "legacy-path", "cwd": "/home/user/project", "backend": "claude" }
+{ "type": "session.kill", "id": "req_6", "session_id": "sess_abc123" }
+{ "type": "session.attach", "id": "req_7", "session_id": "sess_abc123" }
 ```
+
+`workspace.list` 返回 Bridge 允许 App 展示的工作区，默认来自服务端 `~/workspace` 下的一级子目录。`workspace.create` 只创建单段目录名，禁止路径分隔符和默认隐藏目录。
+
+`session.run` 必须传且只传 `workspace_id` 或 `cwd` 之一。`cwd` 是服务端机器上的绝对路径，仅作为高级入口使用，且必须位于 `allowed_paths` 内。
 
 `session.run` 成功后返回：
 
@@ -914,8 +923,11 @@ MVP 可以只保留内存事件缓存，但必须定义缓存策略：
 
 ### 10.4 文件安全
 
-- 必须配置 `allowed_paths`。
-- `session.run` 的 `cwd` 必须位于 `allowed_paths` 内。
+- 默认 `workspace_root` 为 `~/workspace`，`allowed_paths` 默认收敛到 `workspace_root`。
+- App 普通创建流程只暴露 `workspace_root` 下的一级工作区子目录。
+- `session.run` 必须传且只传 `workspace_id` 或 `cwd` 之一。
+- `workspace_id` 解析后必须位于 `workspace_root` 内，并继续通过 `allowed_paths` 校验。
+- 高级 `cwd` 是服务端机器上的绝对路径，必须位于 `allowed_paths` 内。
 - 文件路径必须经过 `realpath`。
 - 解析后路径必须位于白名单目录内。
 - 默认拒绝隐藏目录和敏感目录，包括 `.git`、`.ssh`、`.aws`、`.config/gcloud`。
@@ -1016,6 +1028,8 @@ MVP 完成时应能演示以下流程：
 - Node.js Bridge 原型。
 - Token 认证。
 - `session.list`。
+- `workspace.list`。
+- `workspace.create`。
 - `session.run`。
 - `message.send`。
 - 轮询 `ccc read --json`。
