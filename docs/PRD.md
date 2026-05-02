@@ -915,7 +915,8 @@ MVP 可以只保留内存事件缓存，但必须定义缓存策略：
 
 - Bridge 调用 ccc 必须使用 `execFile` 或等价 API。
 - 禁止使用 shell 拼接命令。
-- 会话名只允许 `[a-zA-Z0-9_-]`，长度 1-64。
+- 用户可见会话名最多 80 字符。
+- 传给 ccc/tmux 的内部会话 handle 由 Bridge 从显示名生成安全 slug，只允许 `[a-z0-9_-]` 加随机后缀。
 - 用户 prompt 最大 100KB。
 - 单个 WebSocket 消息最大 256KB。
 - 单个服务端事件最大 512KB，超过后必须截断并标记 `truncated: true`。

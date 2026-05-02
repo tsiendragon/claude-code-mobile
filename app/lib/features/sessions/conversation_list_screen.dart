@@ -233,6 +233,11 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
                   labelText: 'Session name (optional)',
                   prefixIcon: Icon(Icons.terminal),
                 ),
+                validator: (value) {
+                  final text = (value ?? '').trim();
+                  if (text.length > 80) return 'Use 80 characters or fewer.';
+                  return null;
+                },
               ),
               if (_error != null) ...[
                 const SizedBox(height: 8),
@@ -361,6 +366,7 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
               validator: (value) {
                 final text = (value ?? '').trim();
                 if (text.isEmpty) return 'Folder name is required.';
+                if (text.length > 80) return 'Use 80 characters or fewer.';
                 if (!RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$').hasMatch(text)) {
                   return 'Use letters, numbers, dots, dashes, or underscores.';
                 }

@@ -43,6 +43,22 @@ describe("protocol validators", () => {
     expect(result).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
   });
 
+  it("rejects empty or too-long session names", () => {
+    expect(validateRequest({
+      type: "session.run",
+      id: "req_1",
+      name: "   ",
+      workspace_id: "demo-app"
+    }, 1000)).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
+
+    expect(validateRequest({
+      type: "session.run",
+      id: "req_2",
+      name: "a".repeat(81),
+      workspace_id: "demo-app"
+    }, 1000)).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
+  });
+
   it("accepts workspace.create", () => {
     expect(validateRequest({
       type: "workspace.create",

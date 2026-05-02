@@ -221,7 +221,8 @@ function normalizeErrorCode(message: string): string {
     "RATE_LIMITED",
     "MESSAGE_TOO_LARGE",
     "PATH_NOT_ALLOWED",
-    "WORKSPACE_INVALID"
+    "WORKSPACE_INVALID",
+    "SESSION_NAME_INVALID"
   ];
   return known.find((code) => message.includes(code)) ?? "INVALID_REQUEST";
 }

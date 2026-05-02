@@ -54,8 +54,8 @@ export class SessionManager {
     const realCwd = input.workspaceId
       ? await this.workspaces.resolveWorkspaceCwd(input.workspaceId)
       : await this.resolveManualCwd(input.cwd);
-    const name = input.name;
-    const cccName = `${name}-${randomBytes(4).toString("hex")}`;
+    const name = normalizeSessionDisplayName(input.name);
+    const cccName = buildCccName(name);
     const result = await this.ccc.runSession(cccName, realCwd);
     if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
     return this.ensureSession(cccName, realCwd, "ready", name);
@@ -316,4 +316,21 @@ function normalizeApprovalAction(action: ApprovalAction): "yes" | "no" | "always
   if (action === "approve") return "yes";
   if (action === "reject") return "no";
   return action;
+}
+
+function normalizeSessionDisplayName(input: string): string {
+  const name = input.trim().replace(/\s+/g, " ");
+  if (name.length === 0 || name.length > 80) {
+    throw new Error("SESSION_NAME_INVALID: session name must be 1-80 characters");
+  }
+  return name;
+}
+
+function buildCccName(displayName: string): string {
+  const slug = displayName
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return `${slug || "session"}-${randomBytes(4).toString("hex")}`;
 }

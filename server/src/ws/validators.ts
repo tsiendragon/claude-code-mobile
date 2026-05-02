@@ -49,7 +49,8 @@ export function validateRequest(input: unknown, maxPromptBytes: number): Validat
   }
 
   if (input.type === "session.run") {
-    if (typeof input.name !== "string" || input.name.length === 0) return invalid("name is required");
+    if (typeof input.name !== "string" || input.name.trim().length === 0) return invalid("name is required");
+    if (input.name.trim().length > 80) return invalid("name must be 80 characters or fewer");
     const hasWorkspaceId = typeof input.workspace_id === "string" && input.workspace_id.length > 0;
     const hasCwd = typeof input.cwd === "string" && input.cwd.length > 0;
     if (hasWorkspaceId === hasCwd) return invalid("exactly one of workspace_id or cwd is required");

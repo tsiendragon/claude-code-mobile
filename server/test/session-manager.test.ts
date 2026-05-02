@@ -1,0 +1,83 @@
+import { mkdtemp, realpath } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import type { BridgeConfig } from "../src/config.js";
+import type { CccClient } from "../src/ccc/ccc-client.js";
+import { InMemoryEventStore } from "../src/sessions/event-store.js";
+import { SessionManager } from "../src/sessions/session-manager.js";
+import { WorkspaceService } from "../src/workspaces/workspace-service.js";
+
+function config(root: string): BridgeConfig {
+  return {
+    host: "127.0.0.1",
+    port: 8900,
+    tokenEnv: "CCM_TOKEN",
+    tokenSource: "env",
+    token: "x".repeat(32),
+    allowedPaths: [root],
+    workspaceRoot: root,
+    allowManualCwd: true,
+    cccBin: "ccc",
+    pollIntervalMs: 1000,
+    eventBufferSize: 200,
+    maxPromptBytes: 102400,
+    maxWsMessageBytes: 262144,
+    maxEventBytes: 524288,
+    allowWideBind: false,
+    allowHiddenCwd: false,
+    logLevel: "info",
+    cccTimeoutMs: 15000
+  };
+}
+
+describe("SessionManager", () => {
+  it("uses a safe internal ccc session name while preserving the display name", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const workspaces = new WorkspaceService(cfg);
+    await workspaces.create("demo-app");
+    const cccCalls: Array<{ name: string; cwd: string }> = [];
+    const ccc = {
+      runSession: async (name: string, cwd: string) => {
+        cccCalls.push({ name, cwd });
+        return { ok: true, stdout: "", stderr: "", data: { name } } as const;
+      }
+    } as unknown as CccClient;
+
+    const manager = new SessionManager(cfg, ccc, workspaces, new InMemoryEventStore(20));
+    const session = await manager.run({
+      name: "Feature branch / prod?",
+      workspaceId: "demo-app"
+    });
+    const realRoot = await realpath(root);
+
+    expect(session.name).toBe("Feature branch / prod?");
+    expect(session.cccName).toBe(cccCalls[0].name);
+    expect(cccCalls[0].name).toMatch(/^feature-branch-prod-[a-f0-9]{8}$/);
+    expect(cccCalls[0].cwd).toBe(path.join(realRoot, "demo-app"));
+  });
+
+  it("falls back to a generic ccc name when the display name has no ascii slug", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const workspaces = new WorkspaceService(cfg);
+    await workspaces.create("demo-app");
+    let cccName = "";
+    const ccc = {
+      runSession: async (name: string) => {
+        cccName = name;
+        return { ok: true, stdout: "", stderr: "", data: { name } } as const;
+      }
+    } as unknown as CccClient;
+
+    const manager = new SessionManager(cfg, ccc, workspaces, new InMemoryEventStore(20));
+    const session = await manager.run({
+      name: "测试 会话",
+      workspaceId: "demo-app"
+    });
+
+    expect(session.name).toBe("测试 会话");
+    expect(cccName).toMatch(/^session-[a-f0-9]{8}$/);
+  });
+});

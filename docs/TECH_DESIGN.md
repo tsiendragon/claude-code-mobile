@@ -232,14 +232,16 @@ type SessionRecord = {
 
 ```text
 session.list      -> ccc ps --json
-session.run       -> ccc run <name> --cwd <resolved workspace/cwd> --claude
-session.kill      -> ccc kill <name>
-message.send      -> ccc send <name> <text> --no-wait
-message.approve   -> ccc approve <name> <action>
-message.interrupt -> ccc interrupt <name>
-command.send      -> ccc input <name> <command>
-state polling     -> ccc read <name> --json
+session.run       -> ccc run <safe-ccc-name> --cwd <resolved workspace/cwd> --claude
+session.kill      -> ccc kill <safe-ccc-name>
+message.send      -> ccc send <safe-ccc-name> <text> --no-wait
+message.approve   -> ccc approve <safe-ccc-name> <action>
+message.interrupt -> ccc interrupt <safe-ccc-name>
+command.send      -> ccc input <safe-ccc-name> <command>
+state polling     -> ccc read <safe-ccc-name> --json
 ```
+
+`name` 是用户可见显示名，最多 80 字符。Bridge 传给 ccc/tmux 的 `safe-ccc-name` 由显示名生成 ASCII slug，并追加随机后缀，避免空格、路径分隔符或 shell 元字符进入底层 session handle。
 
 具体参数以 ccc 实际 CLI 为准。Phase 0 必须验证命令签名。
 
