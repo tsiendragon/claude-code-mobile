@@ -8,6 +8,7 @@ import { InMemoryEventStore } from "./sessions/event-store.js";
 import { SessionManager } from "./sessions/session-manager.js";
 import { StatePoller } from "./sessions/state-poller.js";
 import { WorkspaceService } from "./workspaces/workspace-service.js";
+import { buildStartupInfo } from "./startup-info.js";
 
 const configPath = parseConfigPath(process.argv.slice(2));
 const config = await loadConfig(configPath);
@@ -34,7 +35,7 @@ const auth = new AuthService(config);
 new WsGateway(httpServer, config, logger, auth, sessions, events);
 
 httpServer.listen(config.port, config.host, () => {
-  logger.info("bridge_listening", { host: config.host, port: config.port });
+  logger.info("bridge_listening", buildStartupInfo(config));
 });
 
 function parseConfigPath(args: string[]): string | undefined {

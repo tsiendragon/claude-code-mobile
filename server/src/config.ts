@@ -8,6 +8,7 @@ export type BridgeConfig = {
   host: string;
   port: number;
   tokenEnv: string;
+  tokenSource: "config" | "env" | "generated";
   token: string;
   allowedPaths: string[];
   workspaceRoot: string;
@@ -47,7 +48,10 @@ type RawConfig = {
 export async function loadConfig(configPath?: string): Promise<BridgeConfig> {
   const raw = configPath ? await readJsonConfig(configPath) : {};
   const tokenEnv = raw.token_env ?? "CCM_TOKEN";
-  const token = raw.token ?? process.env[tokenEnv] ?? generateDevToken();
+  const configuredToken = raw.token;
+  const envToken = process.env[tokenEnv];
+  const token = configuredToken ?? envToken ?? generateDevToken();
+  const tokenSource = configuredToken ? "config" : envToken ? "env" : "generated";
   const workspaceRoot = expandHome(raw.workspace_root ?? process.env.CCM_WORKSPACE_ROOT ?? "~/workspace");
   const allowedPaths = (raw.allowed_paths ?? [workspaceRoot]).map(expandHome);
 
@@ -55,6 +59,7 @@ export async function loadConfig(configPath?: string): Promise<BridgeConfig> {
     host: raw.host ?? process.env.CCM_HOST ?? "127.0.0.1",
     port: raw.port ?? numberFromEnv("CCM_PORT", 8900),
     tokenEnv,
+    tokenSource,
     token,
     allowedPaths,
     workspaceRoot,
