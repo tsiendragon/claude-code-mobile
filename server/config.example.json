@@ -1,0 +1,16 @@
+{
+  "host": "127.0.0.1",
+  "port": 8900,
+  "token_env": "CCM_TOKEN",
+  "allowed_paths": ["/home/user/projects"],
+  "ccc_bin": "ccc",
+  "poll_interval_ms": 1000,
+  "event_buffer_size": 200,
+  "max_prompt_bytes": 102400,
+  "max_ws_message_bytes": 262144,
+  "max_event_bytes": 524288,
+  "allow_wide_bind": false,
+  "allow_hidden_cwd": false,
+  "log_level": "info",
+  "ccc_timeout_ms": 15000
+}
