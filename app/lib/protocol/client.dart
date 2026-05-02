@@ -47,8 +47,18 @@ class BridgeClient extends ChangeNotifier {
     required ServerConfig config,
     required String token,
   }) {
+    final configChanged = _config?.serverUrl != config.serverUrl ||
+        _config?.allowPrivateWs != config.allowPrivateWs ||
+        _token != token;
     _config = config;
     _token = token;
+    if (configChanged) {
+      _closedByUser = true;
+      _reconnectTimer?.cancel();
+      _attachedSessions.clear();
+      unawaited(_teardownSocket());
+      _setState(BridgeConnectionState.disconnected);
+    }
   }
 
   Future<void> connect() async {
@@ -58,6 +68,9 @@ class BridgeClient extends ChangeNotifier {
       throw const BridgeException('Server URL and token are required.');
     }
 
+    _reconnectTimer?.cancel();
+    _closedByUser = true;
+    await _teardownSocket();
     _closedByUser = false;
     _setState(
       _state == BridgeConnectionState.disconnected
@@ -174,15 +187,18 @@ class BridgeClient extends ChangeNotifier {
     String? cwd,
     String? workspaceId,
   }) async {
-    if ((workspaceId == null || workspaceId.isEmpty) &&
-        (cwd == null || cwd.isEmpty)) {
-      throw const BridgeException('Workspace or working directory is required.');
+    final hasWorkspaceId = workspaceId != null && workspaceId.isNotEmpty;
+    final hasCwd = cwd != null && cwd.isNotEmpty;
+    if (hasWorkspaceId == hasCwd) {
+      throw const BridgeException(
+        'Choose exactly one workspace or working directory.',
+      );
     }
 
     final payload = <String, Object?>{
       'name': name,
       'backend': 'claude',
-      if (workspaceId != null && workspaceId.isNotEmpty)
+      if (hasWorkspaceId)
         'workspace_id': workspaceId
       else
         'cwd': cwd,
@@ -329,10 +345,11 @@ class BridgeClient extends ChangeNotifier {
 
   Future<void> _teardownSocket() async {
     _heartbeatTimer?.cancel();
-    await _subscription?.cancel();
+    final subscription = _subscription;
     _subscription = null;
     final channel = _channel;
     _channel = null;
+    await subscription?.cancel();
     if (channel != null) {
       await channel.sink.close();
     }
