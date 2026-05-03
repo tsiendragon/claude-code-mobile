@@ -49,6 +49,43 @@ void main() {
     expect(workspace.path, '/home/user/workspace/demo-app');
   });
 
+  test('parses system stats', () {
+    final stats = SystemStats.fromJson({
+      'cpu_percent': 23.4,
+      'memory': {
+        'total_bytes': 1024,
+        'free_bytes': 256,
+        'used_bytes': 768,
+        'used_percent': 75,
+      },
+      'load_average': [0.1, 0.2, 0.3],
+      'uptime_seconds': 3600,
+      'platform': 'linux',
+      'arch': 'x64',
+      'hostname': 'server',
+      'cpu_count': 8,
+    });
+
+    expect(stats.cpuPercent, 23.4);
+    expect(stats.memory.usedPercent, 75);
+    expect(stats.loadAverage, [0.1, 0.2, 0.3]);
+    expect(stats.cpuCount, 8);
+  });
+
+  test('parses resolved file references', () {
+    final reference = FileReference.fromJson({
+      'path': '/home/tsien/workspace/test/report.md',
+      'relative_path': 'report.md',
+      'name': 'report.md',
+      'bytes': 12,
+      'language': 'markdown',
+    });
+
+    expect(reference.isMarkdown, isTrue);
+    expect(reference.relativePath, 'report.md');
+    expect(reference.bytes, 12);
+  });
+
   test('parses session backend summaries', () {
     final session = SessionSummary.fromJson({
       'session_id': 'sess_abcdefgh',

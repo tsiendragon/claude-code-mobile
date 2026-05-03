@@ -1,12 +1,15 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../../protocol/client.dart';
 import '../../protocol/models.dart';
 import '../approvals/approval_card.dart';
+
+const _linkChannel = MethodChannel('ccm_mobile/links');
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.session});
@@ -114,6 +117,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       children: [
                         for (final item in _items)
                           _ChatBubble(
+                            sessionId: widget.session.sessionId,
                             item: item,
                             expanded: _expandedMessageIds.contains(item.id),
                             onToggleExpanded: () => _toggleExpanded(item.id),
@@ -464,6 +468,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
 class _ChatBubble extends StatelessWidget {
   const _ChatBubble({
+    required this.sessionId,
     required this.item,
     required this.expanded,
     required this.onToggleExpanded,
@@ -472,6 +477,7 @@ class _ChatBubble extends StatelessWidget {
 
   static const double _collapsedMaxHeight = 280;
 
+  final String sessionId;
   final ChatItem item;
   final bool expanded;
   final VoidCallback onToggleExpanded;
@@ -534,6 +540,7 @@ class _ChatBubble extends StatelessWidget {
                   if (fileReferences.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     _FileReferenceList(
+                      sessionId: sessionId,
                       references: fileReferences,
                       onOpen: onOpenFile,
                     ),
@@ -636,10 +643,15 @@ class _MarkdownMessage extends StatelessWidget {
     );
 
     return MarkdownBody(
-      data: text,
+      data: _withReadableBareLinks(text),
       selectable: true,
+      onTapLink: (_, href, __) => _openMarkdownLink(href),
       softLineBreak: true,
       styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+        a: bodyStyle?.copyWith(
+          color: colorScheme.primary,
+          decoration: TextDecoration.underline,
+        ),
         p: bodyStyle,
         pPadding: const EdgeInsets.only(bottom: 6),
         blockSpacing: 8,
@@ -664,36 +676,75 @@ class _MarkdownMessage extends StatelessWidget {
   }
 }
 
-class _FileReferenceList extends StatelessWidget {
+class _FileReferenceList extends StatefulWidget {
   const _FileReferenceList({
+    required this.sessionId,
     required this.references,
     required this.onOpen,
   });
 
+  final String sessionId;
   final List<FileReference> references;
   final ValueChanged<FileReference> onOpen;
 
   @override
+  State<_FileReferenceList> createState() => _FileReferenceListState();
+}
+
+class _FileReferenceListState extends State<_FileReferenceList> {
+  late Future<List<FileReference>> _resolved;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolved = _resolve();
+  }
+
+  @override
+  void didUpdateWidget(_FileReferenceList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sessionId != widget.sessionId ||
+        _referenceKey(oldWidget.references) !=
+            _referenceKey(widget.references)) {
+      _resolved = _resolve();
+    }
+  }
+
+  Future<List<FileReference>> _resolve() {
+    return context.read<BridgeClient>().resolveFileReferences(
+          sessionId: widget.sessionId,
+          references: widget.references,
+        );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final reference in references)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: OutlinedButton.icon(
-              icon: Icon(_fileIcon(reference)),
-              label: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  reference.name,
-                  overflow: TextOverflow.ellipsis,
+    return FutureBuilder<List<FileReference>>(
+      future: _resolved,
+      builder: (context, snapshot) {
+        final references = snapshot.data ?? const <FileReference>[];
+        if (references.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final reference in references)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: OutlinedButton.icon(
+                  icon: Icon(_fileIcon(reference)),
+                  label: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      reference.relativePath ?? reference.name,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  onPressed: () => widget.onOpen(reference),
                 ),
               ),
-              onPressed: () => onOpen(reference),
-            ),
-          ),
-      ],
+          ],
+        );
+      },
     );
   }
 }
@@ -884,6 +935,82 @@ class _FilePreviewError extends StatelessWidget {
 IconData _fileIcon(FileReference reference) {
   if (reference.isMarkdown) return Icons.article_outlined;
   return Icons.code;
+}
+
+String _referenceKey(List<FileReference> references) {
+  return references.map((reference) => reference.path).join('\n');
+}
+
+final RegExp _bareUrlPattern = RegExp(
+  r'https?://[^\s<>\]]+',
+  caseSensitive: false,
+);
+
+String _withReadableBareLinks(String input) {
+  final buffer = StringBuffer();
+  var cursor = 0;
+
+  for (final match in _bareUrlPattern.allMatches(input)) {
+    if (_isAlreadyMarkdownLink(input, match.start)) continue;
+
+    final rawUrl = match.group(0);
+    if (rawUrl == null) continue;
+
+    final trimmed = _trimUrlSuffix(rawUrl);
+    final uri = Uri.tryParse(trimmed.url);
+    if (uri == null || !uri.hasScheme) continue;
+
+    buffer
+      ..write(input.substring(cursor, match.start))
+      ..write('[')
+      ..write(_readableLinkLabel(uri))
+      ..write('](')
+      ..write(trimmed.url)
+      ..write(')')
+      ..write(trimmed.suffix);
+    cursor = match.end;
+  }
+
+  if (cursor == 0) return input;
+  buffer.write(input.substring(cursor));
+  return buffer.toString();
+}
+
+bool _isAlreadyMarkdownLink(String input, int urlStart) {
+  if (urlStart == 0) return false;
+  final previous = input[urlStart - 1];
+  if (previous == '<') return true;
+  return previous == '(' && urlStart >= 2 && input[urlStart - 2] == ']';
+}
+
+({String url, String suffix}) _trimUrlSuffix(String rawUrl) {
+  var url = rawUrl;
+  var suffix = '';
+  const punctuation = '.,;:!?';
+
+  while (url.isNotEmpty && punctuation.contains(url[url.length - 1])) {
+    suffix = '${url[url.length - 1]}$suffix';
+    url = url.substring(0, url.length - 1);
+  }
+
+  return (url: url, suffix: suffix);
+}
+
+String _readableLinkLabel(Uri uri) {
+  final host = uri.host.isEmpty ? uri.toString() : uri.host;
+  final path =
+      uri.pathSegments.where((segment) => segment.isNotEmpty).take(2).join('/');
+  final label = path.isEmpty ? host : '$host/$path';
+  if (label.length <= 52) return label;
+  return '${label.substring(0, 49)}...';
+}
+
+void _openMarkdownLink(String? href) {
+  if (href == null || href.trim().isEmpty) return;
+  final uri = Uri.tryParse(href);
+  if (uri == null || !uri.hasScheme) return;
+  unawaited(
+      _linkChannel.invokeMethod<void>('openUrl', {'url': uri.toString()}));
 }
 
 String _formatBytes(int bytes) {

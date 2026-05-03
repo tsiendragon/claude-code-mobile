@@ -170,6 +170,19 @@ describe("SessionManager", () => {
       content: "# Report\n\nHello",
       truncated: false
     });
+    await expect(manager.resolveFiles(session.sessionId, [
+      "report.md",
+      "missing.md",
+      path.join(root, "outside.md")
+    ])).resolves.toMatchObject({
+      files: [
+        {
+          name: "report.md",
+          relative_path: "report.md",
+          language: "markdown"
+        }
+      ]
+    });
     await expect(manager.readFile(session.sessionId, path.join(root, "outside.md"))).rejects.toThrow("PATH_NOT_ALLOWED");
   });
 });

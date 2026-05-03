@@ -158,6 +158,11 @@ class BridgeClient extends ChangeNotifier {
     throw const BridgeException('Bridge did not return a workspace.');
   }
 
+  Future<SystemStats> getSystemStats() async {
+    final data = await request('system.stats');
+    return SystemStats.fromJson(data);
+  }
+
   Future<ChatStateSnapshot> attachSession(String sessionId) async {
     final data = await request('session.attach', {'session_id': sessionId});
     final snapshot = ChatStateSnapshot.fromAttachResponse(data);
@@ -261,6 +266,24 @@ class BridgeClient extends ChangeNotifier {
       'path': path,
     });
     return FilePreview.fromJson(data);
+  }
+
+  Future<List<FileReference>> resolveFileReferences({
+    required String sessionId,
+    required List<FileReference> references,
+  }) async {
+    if (references.isEmpty) return const [];
+    final data = await request('file.resolve', {
+      'session_id': sessionId,
+      'paths': references.map((reference) => reference.path).toList(),
+    });
+    final files = data['files'];
+    if (files is! List) return const [];
+    return files
+        .whereType<Map>()
+        .map((raw) => FileReference.fromJson(Map<String, Object?>.from(raw)))
+        .where((reference) => reference.path.isNotEmpty)
+        .toList();
   }
 
   Future<Map<String, Object?>> request(

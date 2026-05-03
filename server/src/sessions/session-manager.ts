@@ -94,6 +94,26 @@ export class SessionManager {
     return this.events.listAfter(sessionId, afterSeq);
   }
 
+  async resolveFiles(sessionId: string, requestedPaths: string[]) {
+    const session = this.requireSession(sessionId);
+    const seen = new Set<string>();
+    const files = [];
+
+    for (const requestedPath of requestedPaths.slice(0, 25)) {
+      const key = requestedPath.trim();
+      if (key.length === 0 || seen.has(key)) continue;
+      seen.add(key);
+
+      const realPath = await this.tryResolveSessionFilePath(session, key);
+      if (!realPath) continue;
+      const info = await stat(realPath).catch(() => undefined);
+      if (!info?.isFile()) continue;
+      files.push(fileMetadata(realPath, session.cwd, info.size));
+    }
+
+    return { files };
+  }
+
   async readFile(sessionId: string, requestedPath: string) {
     const session = this.requireSession(sessionId);
     const realPath = await this.resolveSessionFilePath(session, requestedPath);
@@ -110,14 +130,9 @@ export class SessionManager {
       await handle.close();
     }
 
-    const relativePath = path.relative(session.cwd, realPath);
     return {
-      path: realPath,
-      relative_path: relativePath,
-      name: path.basename(realPath),
-      bytes: info.size,
+      ...fileMetadata(realPath, session.cwd, info.size),
       truncated: info.size > byteLength,
-      language: detectLanguage(realPath),
       content: buffer.toString("utf8")
     };
   }
@@ -339,6 +354,14 @@ export class SessionManager {
     return realPath;
   }
 
+  private async tryResolveSessionFilePath(session: SessionRecord, requestedPath: string): Promise<string | undefined> {
+    try {
+      return await this.resolveSessionFilePath(session, requestedPath);
+    } catch {
+      return undefined;
+    }
+  }
+
   private assertApprovalPathsInSession(session: SessionRecord, approval: ApprovalRecord) {
     for (const rawPath of approval.paths) {
       if (rawPath.trim().length === 0) continue;
@@ -361,6 +384,16 @@ function toSummary(session: SessionRecord): SessionSummary {
     state: session.state,
     last_seq: session.lastSeq,
     needs_attention: session.state === "approval" || session.state === "choosing"
+  };
+}
+
+function fileMetadata(filePath: string, cwd: string, bytes: number) {
+  return {
+    path: filePath,
+    relative_path: path.relative(cwd, filePath),
+    name: path.basename(filePath),
+    bytes,
+    language: detectLanguage(filePath)
   };
 }
 

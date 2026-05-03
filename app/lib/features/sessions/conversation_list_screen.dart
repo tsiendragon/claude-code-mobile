@@ -15,11 +15,15 @@ class ConversationListScreen extends StatefulWidget {
 }
 
 class _ConversationListScreenState extends State<ConversationListScreen> {
+  SystemStats? _systemStats;
+  bool _isLoadingSystemStats = false;
+  String? _systemStatsError;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<SessionController>().load();
+      _refreshAll();
     });
   }
 
@@ -46,7 +50,7 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
           IconButton(
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh),
-            onPressed: sessions.isLoading ? null : sessions.load,
+            onPressed: sessions.isLoading ? null : _refreshAll,
           ),
         ],
       ),
@@ -56,7 +60,7 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
         child: const Icon(Icons.add),
       ),
       body: RefreshIndicator(
-        onRefresh: sessions.load,
+        onRefresh: _refreshAll,
         child: ListView(
           padding: const EdgeInsets.only(bottom: 88),
           children: [
@@ -65,6 +69,12 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
               error: client.lastError,
               onReconnect: _reconnect,
               onSettings: _openServerSettings,
+            ),
+            _SystemStatsPanel(
+              stats: _systemStats,
+              isLoading: _isLoadingSystemStats,
+              error: _systemStatsError,
+              onRefresh: _loadSystemStats,
             ),
             if (sessions.error != null)
               Padding(
@@ -105,9 +115,36 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
   Future<void> _reconnect() async {
     try {
       await context.read<BridgeClient>().connect();
-      if (mounted) await context.read<SessionController>().load();
+      if (mounted) await _refreshAll();
     } catch (_) {
       if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _refreshAll() async {
+    await Future.wait([
+      context.read<SessionController>().load(),
+      _loadSystemStats(),
+    ]);
+  }
+
+  Future<void> _loadSystemStats() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingSystemStats = true;
+      _systemStatsError = null;
+    });
+    try {
+      final stats = await context.read<BridgeClient>().getSystemStats();
+      if (!mounted) return;
+      setState(() => _systemStats = stats);
+    } on BridgeException catch (error) {
+      if (!mounted) return;
+      setState(() => _systemStatsError = error.message);
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingSystemStats = false);
+      }
     }
   }
 
@@ -677,6 +714,154 @@ class _ConnectionBanner extends StatelessWidget {
   }
 }
 
+class _SystemStatsPanel extends StatelessWidget {
+  const _SystemStatsPanel({
+    required this.stats,
+    required this.isLoading,
+    required this.error,
+    required this.onRefresh,
+  });
+
+  final SystemStats? stats;
+  final bool isLoading;
+  final String? error;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final stats = this.stats;
+
+    return Container(
+      width: double.infinity,
+      color: colorScheme.surfaceContainerHighest,
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 12),
+      child: stats == null
+          ? Row(
+              children: [
+                const Icon(Icons.monitor_heart_outlined, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    error ??
+                        (isLoading
+                            ? 'Loading server stats'
+                            : 'Server stats unavailable'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Refresh stats',
+                  icon: isLoading
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
+                  onPressed: isLoading ? null : onRefresh,
+                ),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.monitor_heart_outlined, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        stats.hostname.isEmpty
+                            ? 'Server stats'
+                            : stats.hostname,
+                        style: theme.textTheme.titleSmall,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Refresh stats',
+                      icon: isLoading
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh),
+                      onPressed: isLoading ? null : onRefresh,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                _MetricBar(
+                  label: 'CPU',
+                  value: stats.cpuPercent,
+                  trailing: stats.cpuPercent == null
+                      ? 'n/a'
+                      : '${stats.cpuPercent!.toStringAsFixed(0)}%',
+                ),
+                const SizedBox(height: 8),
+                _MetricBar(
+                  label: 'Memory',
+                  value: stats.memory.usedPercent,
+                  trailing:
+                      '${_formatBytes(stats.memory.usedBytes)} / ${_formatBytes(stats.memory.totalBytes)}',
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  [
+                    if (stats.loadAverage.isNotEmpty)
+                      'load ${stats.loadAverage.map((value) => value.toStringAsFixed(2)).join(' / ')}',
+                    if (stats.cpuCount > 0) '${stats.cpuCount} CPU',
+                    if (stats.uptimeSeconds > 0)
+                      'up ${_formatDuration(stats.uptimeSeconds)}',
+                  ].join(' · '),
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _MetricBar extends StatelessWidget {
+  const _MetricBar({
+    required this.label,
+    required this.value,
+    required this.trailing,
+  });
+
+  final String label;
+  final double? value;
+  final String trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = value == null ? null : (value! / 100).clamp(0.0, 1.0);
+    return Row(
+      children: [
+        SizedBox(
+          width: 64,
+          child: Text(label, style: Theme.of(context).textTheme.labelMedium),
+        ),
+        Expanded(
+          child: LinearProgressIndicator(value: progress),
+        ),
+        const SizedBox(width: 10),
+        SizedBox(
+          width: 104,
+          child: Text(
+            trailing,
+            textAlign: TextAlign.right,
+            style: Theme.of(context).textTheme.labelSmall,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _SessionTile extends StatelessWidget {
   const _SessionTile({
     required this.session,
@@ -761,6 +946,25 @@ class _SessionTile extends StatelessWidget {
     if (segments.length <= 3) return cwd;
     return '.../${segments.sublist(segments.length - 3).join('/')}';
   }
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  final kb = bytes / 1024;
+  if (kb < 1024) return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} KB';
+  final mb = kb / 1024;
+  if (mb < 1024) return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
+  final gb = mb / 1024;
+  return '${gb.toStringAsFixed(gb < 10 ? 1 : 0)} GB';
+}
+
+String _formatDuration(int seconds) {
+  final days = seconds ~/ 86400;
+  final hours = (seconds % 86400) ~/ 3600;
+  final minutes = (seconds % 3600) ~/ 60;
+  if (days > 0) return '${days}d ${hours}h';
+  if (hours > 0) return '${hours}h ${minutes}m';
+  return '${minutes}m';
 }
 
 class _StatusBadge extends StatelessWidget {

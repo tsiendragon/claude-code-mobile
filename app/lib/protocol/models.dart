@@ -210,6 +210,77 @@ class WorkspaceSummary {
   }
 }
 
+class SystemStats {
+  const SystemStats({
+    required this.memory,
+    required this.loadAverage,
+    required this.uptimeSeconds,
+    required this.platform,
+    required this.arch,
+    required this.hostname,
+    required this.cpuCount,
+    this.cpuPercent,
+  });
+
+  final double? cpuPercent;
+  final MemoryStats memory;
+  final List<double> loadAverage;
+  final int uptimeSeconds;
+  final String platform;
+  final String arch;
+  final String hostname;
+  final int cpuCount;
+
+  factory SystemStats.fromJson(Map<String, Object?> json) {
+    final rawMemory = json['memory'];
+    return SystemStats(
+      cpuPercent: (json['cpu_percent'] as num?)?.toDouble() ??
+          (json['cpuPercent'] as num?)?.toDouble(),
+      memory: MemoryStats.fromJson(
+        rawMemory is Map
+            ? Map<String, Object?>.from(rawMemory)
+            : const <String, Object?>{},
+      ),
+      loadAverage:
+          (json['load_average'] as List?)?.whereType<num>().map((value) {
+                return value.toDouble();
+              }).toList() ??
+              const <double>[],
+      uptimeSeconds:
+          json['uptime_seconds'] as int? ?? json['uptimeSeconds'] as int? ?? 0,
+      platform: json['platform'] as String? ?? '',
+      arch: json['arch'] as String? ?? '',
+      hostname: json['hostname'] as String? ?? '',
+      cpuCount: json['cpu_count'] as int? ?? json['cpuCount'] as int? ?? 0,
+    );
+  }
+}
+
+class MemoryStats {
+  const MemoryStats({
+    required this.totalBytes,
+    required this.freeBytes,
+    required this.usedBytes,
+    this.usedPercent,
+  });
+
+  final int totalBytes;
+  final int freeBytes;
+  final int usedBytes;
+  final double? usedPercent;
+
+  factory MemoryStats.fromJson(Map<String, Object?> json) {
+    return MemoryStats(
+      totalBytes:
+          json['total_bytes'] as int? ?? json['totalBytes'] as int? ?? 0,
+      freeBytes: json['free_bytes'] as int? ?? json['freeBytes'] as int? ?? 0,
+      usedBytes: json['used_bytes'] as int? ?? json['usedBytes'] as int? ?? 0,
+      usedPercent: (json['used_percent'] as num?)?.toDouble() ??
+          (json['usedPercent'] as num?)?.toDouble(),
+    );
+  }
+}
+
 class FilePreview {
   const FilePreview({
     required this.path,
@@ -255,16 +326,34 @@ class FileReference {
     required this.path,
     required this.name,
     required this.language,
+    this.relativePath,
+    this.bytes,
   });
 
   final String path;
   final String name;
   final String language;
+  final String? relativePath;
+  final int? bytes;
 
   bool get isMarkdown =>
       language == 'markdown' ||
       name.toLowerCase().endsWith('.md') ||
       name.toLowerCase().endsWith('.markdown');
+
+  factory FileReference.fromJson(Map<String, Object?> json) {
+    final path = json['path'] as String? ?? '';
+    final name = json['name'] as String? ?? _fileName(path);
+    final language = json['language'] as String? ?? _languageForPath(name);
+    return FileReference(
+      path: path,
+      name: name,
+      language: language,
+      relativePath:
+          json['relative_path'] as String? ?? json['relativePath'] as String?,
+      bytes: json['bytes'] as int?,
+    );
+  }
 }
 
 class ChatStateSnapshot {

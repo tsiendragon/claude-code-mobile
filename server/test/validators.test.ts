@@ -91,6 +91,22 @@ describe("protocol validators", () => {
     }, 1000).ok).toBe(true);
   });
 
+  it("accepts system.stats without a session", () => {
+    expect(validateRequest({
+      type: "system.stats",
+      id: "req_1"
+    }, 1000).ok).toBe(true);
+  });
+
+  it("accepts file.resolve with session paths", () => {
+    expect(validateRequest({
+      type: "file.resolve",
+      id: "req_1",
+      session_id: "sess_abcdefgh",
+      paths: ["report.md", "src/main.ts"]
+    }, 1000).ok).toBe(true);
+  });
+
   it("accepts file.read with a session path", () => {
     expect(validateRequest({
       type: "file.read",

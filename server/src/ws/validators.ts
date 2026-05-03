@@ -3,6 +3,7 @@ import { PROTOCOL_VERSION, type RequestEnvelope } from "../types/protocol.js";
 const requestTypes = new Set([
   "auth",
   "ping",
+  "system.stats",
   "workspace.list",
   "workspace.create",
   "session.list",
@@ -13,6 +14,7 @@ const requestTypes = new Set([
   "message.approve",
   "message.interrupt",
   "command.send",
+  "file.resolve",
   "file.read",
   "events.sync"
 ]);
@@ -92,6 +94,15 @@ export function validateRequest(input: unknown, maxPromptBytes: number): Validat
     }
   }
 
+  if (input.type === "file.resolve") {
+    if (!Array.isArray(input.paths)) return invalid("paths are required");
+    if (input.paths.length > 25) return invalid("too many file paths");
+    for (const item of input.paths) {
+      if (typeof item !== "string" || item.trim().length === 0) return invalid("file path is required");
+      if (item.length > 4096 || item.includes("\0")) return invalid("file path is invalid");
+    }
+  }
+
   if (input.type === "events.sync") {
     const after = input.after ?? input.after_seq;
     if (!Number.isInteger(after) || Number(after) < 0) {
@@ -118,6 +129,7 @@ function requiresSession(type: string): boolean {
     "message.approve",
     "message.interrupt",
     "command.send",
+    "file.resolve",
     "file.read",
     "events.sync"
   ].includes(type);

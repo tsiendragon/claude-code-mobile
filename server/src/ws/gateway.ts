@@ -3,6 +3,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import type { BridgeConfig } from "../config.js";
 import type { Logger } from "../logger.js";
 import { TokenBucketRateLimiter } from "../security/rate-limit.js";
+import { readSystemStats } from "../system/stats.js";
 import type { ApprovalAction, SessionBackend } from "../types/domain.js";
 import type { RequestEnvelope } from "../types/protocol.js";
 import { AuthService } from "./auth.js";
@@ -123,6 +124,9 @@ export class WsGateway {
   private async handleRequest(socket: WebSocket, request: RequestEnvelope) {
     try {
       switch (request.type) {
+        case "system.stats":
+          this.send(socket, ok(request.id, await readSystemStats()));
+          break;
         case "workspace.list":
           this.send(socket, ok(request.id, { workspaces: await this.sessions.listWorkspaces() }));
           break;
@@ -179,6 +183,12 @@ export class WsGateway {
             String(request.session_id),
             String(request.client_msg_id),
             String(request.command)
+          )));
+          break;
+        case "file.resolve":
+          this.send(socket, ok(request.id, await this.sessions.resolveFiles(
+            String(request.session_id),
+            Array.isArray(request.paths) ? request.paths.filter((item): item is string => typeof item === "string") : []
           )));
           break;
         case "file.read":
