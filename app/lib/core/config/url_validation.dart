@@ -1,3 +1,5 @@
+import 'server_config.dart';
+
 enum ServerUrlRisk {
   none,
   privateNetwork,
@@ -22,6 +24,7 @@ class ServerUrlValidationResult {
 ServerUrlValidationResult validateServerUrl(
   String value, {
   required bool allowPrivateWs,
+  ConnectionMode connectionMode = ConnectionMode.direct,
 }) {
   final uri = Uri.tryParse(value.trim());
   if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
@@ -47,6 +50,20 @@ ServerUrlValidationResult validateServerUrl(
   if (privateRisk == null) {
     return const ServerUrlValidationResult.invalid(
       'Public ws:// URLs are rejected. Use wss:// for public servers.',
+    );
+  }
+
+  if (connectionMode == ConnectionMode.tailscale &&
+      privateRisk != ServerUrlRisk.tailscale) {
+    return const ServerUrlValidationResult.invalid(
+      'Tailscale mode expects a 100.x Tailscale ws:// address.',
+    );
+  }
+
+  if (connectionMode == ConnectionMode.wireguard &&
+      privateRisk != ServerUrlRisk.privateNetwork) {
+    return const ServerUrlValidationResult.invalid(
+      'WireGuard mode expects a private VPN ws:// address.',
     );
   }
 
