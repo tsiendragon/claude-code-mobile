@@ -6,6 +6,7 @@ Current status: MVP scaffold with a Node.js Bridge Server, Flutter Android app, 
 
 - [PRD](./docs/PRD.md)
 - [Technical Design](./docs/TECH_DESIGN.md)
+- [Deployment Guide](./docs/DEPLOYMENT.md)
 
 ## Structure
 
