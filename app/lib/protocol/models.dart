@@ -587,12 +587,9 @@ List<FileReference> extractFileReferences(String text) {
   final references = <FileReference>[];
   final seen = <String>{};
 
-  for (final match in _filePathPattern.allMatches(text)) {
-    if (_isUrlPathMatch(text, match.start)) continue;
-    final rawPath = match.group(1);
-    if (rawPath == null) continue;
-    final path = _cleanFilePath(rawPath);
-    if (!_isPreviewablePath(path) || !seen.add(path)) continue;
+  for (final match in extractFileReferenceMatches(text)) {
+    final path = match.path;
+    if (!seen.add(path)) continue;
     references.add(FileReference(
       path: path,
       name: _fileName(path),
@@ -601,6 +598,40 @@ List<FileReference> extractFileReferences(String text) {
   }
 
   return references;
+}
+
+class FileReferenceMatch {
+  const FileReferenceMatch({
+    required this.rawText,
+    required this.path,
+    required this.start,
+    required this.end,
+  });
+
+  final String rawText;
+  final String path;
+  final int start;
+  final int end;
+}
+
+List<FileReferenceMatch> extractFileReferenceMatches(String text) {
+  final matches = <FileReferenceMatch>[];
+
+  for (final match in _filePathPattern.allMatches(text)) {
+    if (_isUrlPathMatch(text, match.start)) continue;
+    final rawPath = match.group(1);
+    if (rawPath == null) continue;
+    final path = _cleanFilePath(rawPath);
+    if (!_isPreviewablePath(path)) continue;
+    matches.add(FileReferenceMatch(
+      rawText: rawPath,
+      path: path,
+      start: match.start,
+      end: match.end,
+    ));
+  }
+
+  return matches;
 }
 
 bool _isUrlPathMatch(String text, int matchStart) {

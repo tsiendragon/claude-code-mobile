@@ -187,6 +187,18 @@ void main() {
     expect(references.last.language, 'typescript');
   });
 
+  test('extracts file reference positions for inline links', () {
+    final matches = extractFileReferenceMatches(
+      'See [Report](report.md), output.md, and https://example.com/readme.md',
+    );
+
+    expect(matches.map((item) => item.path), [
+      'report.md',
+      'output.md',
+    ]);
+    expect(matches.last.rawText, 'output.md');
+  });
+
   test('parses file previews', () {
     final preview = FilePreview.fromJson({
       'path': '/home/tsien/workspace/test/report.md',

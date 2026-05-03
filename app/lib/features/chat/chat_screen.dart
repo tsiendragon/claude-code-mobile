@@ -486,19 +486,17 @@ class _ChatBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = item.role == ChatItemRole.user;
-    final isAssistant = item.role == ChatItemRole.assistant;
     final isCollapsible = _isCollapsible(item.text);
     final colorScheme = Theme.of(context).colorScheme;
     final background = isUser
         ? colorScheme.primaryContainer
         : colorScheme.surfaceContainerHigh;
     final alignment = isUser ? Alignment.centerRight : Alignment.centerLeft;
-    final content = isAssistant
-        ? _MarkdownMessage(text: item.text)
-        : SelectableText(item.text);
-    final fileReferences = isAssistant
-        ? extractFileReferences(item.text)
-        : const <FileReference>[];
+    final content = _MarkdownMessage(
+      sessionId: sessionId,
+      text: item.text,
+      onOpenFile: onOpenFile,
+    );
 
     return Align(
       alignment: alignment,
@@ -535,14 +533,6 @@ class _ChatBubble extends StatelessWidget {
                       ),
                       label: Text(expanded ? 'Collapse' : 'Show full response'),
                       onPressed: onToggleExpanded,
-                    ),
-                  ],
-                  if (fileReferences.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    _FileReferenceList(
-                      sessionId: sessionId,
-                      references: fileReferences,
-                      onOpen: onOpenFile,
                     ),
                   ],
                   if (item.pending || item.failed) ...[
@@ -627,10 +617,49 @@ class _MessageBody extends StatelessWidget {
   }
 }
 
-class _MarkdownMessage extends StatelessWidget {
-  const _MarkdownMessage({required this.text});
+class _MarkdownMessage extends StatefulWidget {
+  const _MarkdownMessage({
+    required this.text,
+    this.sessionId,
+    this.onOpenFile,
+  });
 
   final String text;
+  final String? sessionId;
+  final ValueChanged<FileReference>? onOpenFile;
+
+  @override
+  State<_MarkdownMessage> createState() => _MarkdownMessageState();
+}
+
+class _MarkdownMessageState extends State<_MarkdownMessage> {
+  late Future<List<FileReference>> _resolvedFileReferences;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolvedFileReferences = _resolveFileReferences();
+  }
+
+  @override
+  void didUpdateWidget(_MarkdownMessage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text ||
+        oldWidget.sessionId != widget.sessionId) {
+      _resolvedFileReferences = _resolveFileReferences();
+    }
+  }
+
+  Future<List<FileReference>> _resolveFileReferences() {
+    final sessionId = widget.sessionId;
+    if (sessionId == null) return Future.value(const <FileReference>[]);
+    final references = extractFileReferences(widget.text);
+    if (references.isEmpty) return Future.value(const <FileReference>[]);
+    return context.read<BridgeClient>().resolveFileReferences(
+          sessionId: sessionId,
+          references: references,
+        );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -642,107 +671,42 @@ class _MarkdownMessage extends StatelessWidget {
       backgroundColor: colorScheme.surfaceContainerHighest,
     );
 
-    return MarkdownBody(
-      data: _withReadableBareLinks(text),
-      selectable: true,
-      onTapLink: (_, href, __) => _openMarkdownLink(href),
-      softLineBreak: true,
-      styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-        a: bodyStyle?.copyWith(
-          color: colorScheme.primary,
-          decoration: TextDecoration.underline,
-        ),
-        p: bodyStyle,
-        pPadding: const EdgeInsets.only(bottom: 6),
-        blockSpacing: 8,
-        listIndent: 20,
-        code: codeStyle,
-        codeblockPadding: const EdgeInsets.all(10),
-        codeblockDecoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        blockquotePadding: const EdgeInsets.only(left: 10),
-        blockquoteDecoration: BoxDecoration(
-          border: Border(
-            left: BorderSide(
-              color: colorScheme.outlineVariant,
-              width: 3,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _FileReferenceList extends StatefulWidget {
-  const _FileReferenceList({
-    required this.sessionId,
-    required this.references,
-    required this.onOpen,
-  });
-
-  final String sessionId;
-  final List<FileReference> references;
-  final ValueChanged<FileReference> onOpen;
-
-  @override
-  State<_FileReferenceList> createState() => _FileReferenceListState();
-}
-
-class _FileReferenceListState extends State<_FileReferenceList> {
-  late Future<List<FileReference>> _resolved;
-
-  @override
-  void initState() {
-    super.initState();
-    _resolved = _resolve();
-  }
-
-  @override
-  void didUpdateWidget(_FileReferenceList oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.sessionId != widget.sessionId ||
-        _referenceKey(oldWidget.references) !=
-            _referenceKey(widget.references)) {
-      _resolved = _resolve();
-    }
-  }
-
-  Future<List<FileReference>> _resolve() {
-    return context.read<BridgeClient>().resolveFileReferences(
-          sessionId: widget.sessionId,
-          references: widget.references,
-        );
-  }
-
-  @override
-  Widget build(BuildContext context) {
     return FutureBuilder<List<FileReference>>(
-      future: _resolved,
+      future: _resolvedFileReferences,
       builder: (context, snapshot) {
-        final references = snapshot.data ?? const <FileReference>[];
-        if (references.isEmpty) return const SizedBox.shrink();
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final reference in references)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: OutlinedButton.icon(
-                  icon: Icon(_fileIcon(reference)),
-                  label: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      reference.relativePath ?? reference.name,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  onPressed: () => widget.onOpen(reference),
+        final fileReferences = snapshot.data ?? const <FileReference>[];
+        return MarkdownBody(
+          data: _withInlineLinks(widget.text, fileReferences),
+          selectable: true,
+          onTapLink: (_, href, __) {
+            _openMarkdownLink(href, fileReferences, widget.onOpenFile);
+          },
+          softLineBreak: true,
+          styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+            a: bodyStyle?.copyWith(
+              color: colorScheme.primary,
+              decoration: TextDecoration.underline,
+            ),
+            p: bodyStyle,
+            pPadding: const EdgeInsets.only(bottom: 6),
+            blockSpacing: 8,
+            listIndent: 20,
+            code: codeStyle,
+            codeblockPadding: const EdgeInsets.all(10),
+            codeblockDecoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            blockquotePadding: const EdgeInsets.only(left: 10),
+            blockquoteDecoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(
+                  color: colorScheme.outlineVariant,
+                  width: 3,
                 ),
               ),
-          ],
+            ),
+          ),
         );
       },
     );
@@ -813,7 +777,10 @@ class _FilePreviewScreenState extends State<_FilePreviewScreen> {
               },
             );
           }
-          return _FilePreviewBody(preview: preview);
+          return _FilePreviewBody(
+            sessionId: widget.sessionId,
+            preview: preview,
+          );
         },
       ),
     );
@@ -821,8 +788,12 @@ class _FilePreviewScreenState extends State<_FilePreviewScreen> {
 }
 
 class _FilePreviewBody extends StatelessWidget {
-  const _FilePreviewBody({required this.preview});
+  const _FilePreviewBody({
+    required this.sessionId,
+    required this.preview,
+  });
 
+  final String sessionId;
   final FilePreview preview;
 
   @override
@@ -861,7 +832,20 @@ class _FilePreviewBody extends StatelessWidget {
           child: preview.isMarkdown
               ? SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
-                  child: _MarkdownMessage(text: preview.content),
+                  child: _MarkdownMessage(
+                    sessionId: sessionId,
+                    text: preview.content,
+                    onOpenFile: (reference) {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => _FilePreviewScreen(
+                            sessionId: sessionId,
+                            reference: reference,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                 )
               : _CodePreview(content: preview.content),
         ),
@@ -932,26 +916,18 @@ class _FilePreviewError extends StatelessWidget {
   }
 }
 
-IconData _fileIcon(FileReference reference) {
-  if (reference.isMarkdown) return Icons.article_outlined;
-  return Icons.code;
-}
-
-String _referenceKey(List<FileReference> references) {
-  return references.map((reference) => reference.path).join('\n');
-}
+const _fileHrefPrefix = 'ccm-file:';
 
 final RegExp _bareUrlPattern = RegExp(
   r'https?://[^\s<>\]]+',
   caseSensitive: false,
 );
 
-String _withReadableBareLinks(String input) {
-  final buffer = StringBuffer();
-  var cursor = 0;
+String _withInlineLinks(String input, List<FileReference> fileReferences) {
+  final replacements = <_LinkReplacement>[];
 
   for (final match in _bareUrlPattern.allMatches(input)) {
-    if (_isAlreadyMarkdownLink(input, match.start)) continue;
+    if (_isInsideExistingMarkdownLink(input, match.start)) continue;
 
     final rawUrl = match.group(0);
     if (rawUrl == null) continue;
@@ -960,27 +936,69 @@ String _withReadableBareLinks(String input) {
     final uri = Uri.tryParse(trimmed.url);
     if (uri == null || !uri.hasScheme) continue;
 
-    buffer
-      ..write(input.substring(cursor, match.start))
-      ..write('[')
-      ..write(_readableLinkLabel(uri))
-      ..write('](')
-      ..write(trimmed.url)
-      ..write(')')
-      ..write(trimmed.suffix);
-    cursor = match.end;
+    replacements.add(_LinkReplacement(
+      start: match.start,
+      end: match.end,
+      text:
+          '[${_escapeMarkdownLabel(_readableLinkLabel(uri))}](${trimmed.url})${trimmed.suffix}',
+    ));
   }
 
-  if (cursor == 0) return input;
+  for (final match in extractFileReferenceMatches(input)) {
+    if (_isInsideExistingMarkdownLink(input, match.start)) continue;
+    final reference = _fileReferenceForPath(match.path, fileReferences);
+    if (reference == null) continue;
+
+    replacements.add(_LinkReplacement(
+      start: match.start,
+      end: match.end,
+      text:
+          '[${_escapeMarkdownLabel(match.rawText)}]($_fileHrefPrefix${Uri.encodeComponent(reference.path)})',
+    ));
+  }
+
+  if (replacements.isEmpty) return input;
+  replacements.sort((a, b) => a.start.compareTo(b.start));
+
+  final buffer = StringBuffer();
+  var cursor = 0;
+
+  for (final replacement in replacements) {
+    if (replacement.start < cursor) continue;
+    buffer
+      ..write(input.substring(cursor, replacement.start))
+      ..write(replacement.text);
+    cursor = replacement.end;
+  }
+
   buffer.write(input.substring(cursor));
   return buffer.toString();
 }
 
-bool _isAlreadyMarkdownLink(String input, int urlStart) {
-  if (urlStart == 0) return false;
-  final previous = input[urlStart - 1];
-  if (previous == '<') return true;
-  return previous == '(' && urlStart >= 2 && input[urlStart - 2] == ']';
+class _LinkReplacement {
+  const _LinkReplacement({
+    required this.start,
+    required this.end,
+    required this.text,
+  });
+
+  final int start;
+  final int end;
+  final String text;
+}
+
+bool _isInsideExistingMarkdownLink(String input, int start) {
+  if (start > 0 && input[start - 1] == '<') return true;
+  final labelStart = input.lastIndexOf('[', start);
+  if (labelStart >= 0) {
+    final labelEnd = input.indexOf('](', labelStart);
+    if (labelEnd >= start) return true;
+    if (labelEnd >= 0) {
+      final destinationEnd = input.indexOf(')', labelEnd + 2);
+      if (destinationEnd >= start) return true;
+    }
+  }
+  return false;
 }
 
 ({String url, String suffix}) _trimUrlSuffix(String rawUrl) {
@@ -1005,12 +1023,69 @@ String _readableLinkLabel(Uri uri) {
   return '${label.substring(0, 49)}...';
 }
 
-void _openMarkdownLink(String? href) {
+String _escapeMarkdownLabel(String input) {
+  return input
+      .replaceAll(r'\', r'\\')
+      .replaceAll('[', r'\[')
+      .replaceAll(']', r'\]');
+}
+
+void _openMarkdownLink(
+  String? href,
+  List<FileReference> fileReferences,
+  ValueChanged<FileReference>? onOpenFile,
+) {
   if (href == null || href.trim().isEmpty) return;
+  final fileReference = _fileReferenceForHref(href, fileReferences);
+  if (fileReference != null && onOpenFile != null) {
+    onOpenFile(fileReference);
+    return;
+  }
+
   final uri = Uri.tryParse(href);
-  if (uri == null || !uri.hasScheme) return;
+  if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) return;
   unawaited(
       _linkChannel.invokeMethod<void>('openUrl', {'url': uri.toString()}));
+}
+
+FileReference? _fileReferenceForHref(
+  String href,
+  List<FileReference> references,
+) {
+  if (href.startsWith(_fileHrefPrefix)) {
+    return _fileReferenceForPath(
+      Uri.decodeComponent(href.substring(_fileHrefPrefix.length)),
+      references,
+    );
+  }
+  return _fileReferenceForPath(href, references);
+}
+
+FileReference? _fileReferenceForPath(
+  String path,
+  List<FileReference> references,
+) {
+  final normalized = _normalizeReferencePath(path);
+  if (normalized.isEmpty) return null;
+
+  for (final reference in references) {
+    final paths = <String>{
+      reference.path,
+      if (reference.relativePath != null) reference.relativePath!,
+      reference.name,
+    }.map(_normalizeReferencePath);
+    if (paths.contains(normalized)) return reference;
+  }
+
+  return null;
+}
+
+String _normalizeReferencePath(String path) {
+  var normalized = Uri.decodeComponent(path.trim()).replaceAll('\\', '/');
+  while (normalized.startsWith('./')) {
+    normalized = normalized.substring(2);
+  }
+  return normalized;
 }
 
 String _formatBytes(int bytes) {
