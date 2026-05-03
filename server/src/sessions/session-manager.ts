@@ -36,6 +36,7 @@ export class SessionManager {
     const result = await this.ccc.listSessions();
     if (result.ok) {
       for (const cccSession of result.data) {
+        if (cccSession.alive === false) continue;
         if (!cccSession.cwd) continue;
         try {
           const realCwd = await assertAllowedCwd(cccSession.cwd, this.config.allowedPaths, {

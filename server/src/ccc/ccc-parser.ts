@@ -12,7 +12,8 @@ export function parseCccSessionList(stdout: string): CccSession[] {
     return {
       name: record.name,
       cwd: typeof record.cwd === "string" ? record.cwd : undefined,
-      state: normalizeState(record.state)
+      state: normalizeState(record.state),
+      alive: typeof record.alive === "boolean" ? record.alive : undefined
     };
   });
 }

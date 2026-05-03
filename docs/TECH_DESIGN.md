@@ -232,7 +232,7 @@ type SessionRecord = {
 
 ```text
 session.list      -> ccc ps --json
-session.run       -> ccc run <safe-ccc-name> --cwd <resolved workspace/cwd> --claude
+session.run       -> ccc run <safe-ccc-name> --cwd <resolved workspace/cwd>
 session.kill      -> ccc kill <safe-ccc-name>
 message.send      -> ccc send <safe-ccc-name> <text> --no-wait
 message.approve   -> ccc approve <safe-ccc-name> <action>

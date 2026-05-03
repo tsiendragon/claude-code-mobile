@@ -29,8 +29,10 @@ export class StatePoller {
   }
 
   private async tick(sessionId: string) {
+    if (!this.timers.has(sessionId)) return;
     try {
       const session = await this.manager.applySnapshot(sessionId);
+      if (!this.timers.has(sessionId)) return;
       this.failures.delete(sessionId);
       if (session.state === "ended") {
         this.stop(sessionId);
@@ -38,6 +40,7 @@ export class StatePoller {
       }
       this.schedule(sessionId, session.state === "ready" ? this.baseIntervalMs * 3 : this.baseIntervalMs);
     } catch (error) {
+      if (!this.timers.has(sessionId)) return;
       const count = (this.failures.get(sessionId) ?? 0) + 1;
       this.failures.set(sessionId, count);
       this.logger.warn("state_poll_failed", {

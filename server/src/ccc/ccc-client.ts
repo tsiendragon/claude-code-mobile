@@ -14,7 +14,7 @@ export class CccClient {
   }
 
   runSession(name: string, cwd: string): Promise<CccCommandResult<{ name: string }>> {
-    return this.run(["run", name, "--cwd", cwd, "--claude"], () => ({ name }));
+    return this.run(this.buildRunSessionArgs(name, cwd), () => ({ name }));
   }
 
   killSession(name: string): Promise<CccCommandResult<{ name: string }>> {
@@ -43,6 +43,10 @@ export class CccClient {
 
   buildCommand(args: string[]): { file: string; args: string[] } {
     return { file: this.config.cccBin, args };
+  }
+
+  buildRunSessionArgs(name: string, cwd: string): string[] {
+    return ["run", name, "--cwd", cwd];
   }
 
   private async run<T>(args: string[], parse: (stdout: string) => T): Promise<CccCommandResult<T>> {

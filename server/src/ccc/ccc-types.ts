@@ -4,6 +4,7 @@ export type CccSession = {
   name: string;
   cwd?: string;
   state?: SessionState;
+  alive?: boolean;
 };
 
 export type CccReadResult = {

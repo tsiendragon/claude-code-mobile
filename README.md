@@ -30,6 +30,14 @@ npm run dev -- --config config.example.json
 
 The default config creates and exposes app-created workspaces under `~/workspace`. `session.run` accepts either a `workspace_id` from the app workspace picker or an advanced `cwd` value. Advanced `cwd` values are paths on the server machine and must resolve inside `allowed_paths`.
 
+Bridge smoke test against a running local Bridge:
+
+```bash
+cd server
+CCM_E2E_TOKEN="$CCM_TOKEN" npm run e2e:smoke
+CCM_E2E_TOKEN="$CCM_TOKEN" CCM_E2E_PROMPT="Do not edit files. Reply with exactly: OK" npm run e2e:smoke
+```
+
 Flutter App:
 
 ```bash

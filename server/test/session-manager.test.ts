@@ -32,6 +32,33 @@ function config(root: string): BridgeConfig {
 }
 
 describe("SessionManager", () => {
+  it("skips dead sessions reported by ccc ps", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const ccc = {
+      listSessions: async () => ({
+        ok: true,
+        stdout: "",
+        stderr: "",
+        data: [
+          { name: "dead-demo", cwd: root, alive: false },
+          { name: "live-demo", cwd: root, alive: true, state: "ready" }
+        ]
+      })
+    } as unknown as CccClient;
+
+    const manager = new SessionManager(
+      cfg,
+      ccc,
+      new WorkspaceService(cfg),
+      new InMemoryEventStore(20)
+    );
+
+    const sessions = await manager.list();
+
+    expect(sessions.map((session) => session.name)).toEqual(["live-demo"]);
+  });
+
   it("uses a safe internal ccc session name while preserving the display name", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
     const cfg = config(root);
