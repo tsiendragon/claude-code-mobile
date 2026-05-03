@@ -22,9 +22,16 @@ export function parseCccRead(stdout: string): CccReadResult {
   const parsed = JSON.parse(stdout) as Record<string, unknown>;
   return {
     state: normalizeState(parsed.state) ?? "ready",
-    output: typeof parsed.output === "string" ? parsed.output : undefined,
+    output: parseReadOutput(parsed),
     pendingApproval: parsePendingApproval(parsed.pendingApproval ?? parsed.pending_approval)
   };
+}
+
+function parseReadOutput(parsed: Record<string, unknown>): string | undefined {
+  if (typeof parsed.output === "string" && parsed.output.length > 0) return parsed.output;
+  if (typeof parsed.lastResponse === "string" && parsed.lastResponse.length > 0) return parsed.lastResponse;
+  if (typeof parsed.last_response === "string" && parsed.last_response.length > 0) return parsed.last_response;
+  return undefined;
 }
 
 function parsePendingApproval(input: unknown): CccReadResult["pendingApproval"] {
