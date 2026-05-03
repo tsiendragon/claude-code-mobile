@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../../protocol/client.dart';
@@ -23,6 +24,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   SessionSummary? _session;
   List<ChatItem> _items = const [];
+  final Set<String> _expandedMessageIds = <String>{};
   PendingApproval? _pendingApproval;
   bool _isLoading = true;
   bool _isSending = false;
@@ -52,8 +54,8 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final session = _session ?? widget.session;
-    final canSend =
-        (_canSendText(session.state) || _pendingApproval != null) && !_isSending;
+    final canSend = (_canSendText(session.state) || _pendingApproval != null) &&
+        !_isSending;
     final canInterrupt = session.state == SessionState.thinking ||
         session.state == SessionState.approval ||
         session.state == SessionState.choosing;
@@ -93,7 +95,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 width: double.infinity,
                 color: Theme.of(context).colorScheme.errorContainer,
                 padding: const EdgeInsets.all(8),
-                child: const Text('Event history gap detected. Snapshot shown.'),
+                child:
+                    const Text('Event history gap detected. Snapshot shown.'),
               ),
             if (_error != null)
               Container(
@@ -109,7 +112,12 @@ class _ChatScreenState extends State<ChatScreen> {
                       controller: _scrollController,
                       padding: const EdgeInsets.all(16),
                       children: [
-                        for (final item in _items) _ChatBubble(item: item),
+                        for (final item in _items)
+                          _ChatBubble(
+                            item: item,
+                            expanded: _expandedMessageIds.contains(item.id),
+                            onToggleExpanded: () => _toggleExpanded(item.id),
+                          ),
                         if (_pendingApproval != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 12),
@@ -155,7 +163,8 @@ class _ChatScreenState extends State<ChatScreen> {
                         icon: _isSending
                             ? const SizedBox.square(
                                 dimension: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.send),
                         onPressed: canSend ? _send : null,
@@ -178,11 +187,14 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      final snapshot =
-          await context.read<BridgeClient>().attachSession(widget.session.sessionId);
+      final snapshot = await context
+          .read<BridgeClient>()
+          .attachSession(widget.session.sessionId);
       setState(() {
         _session = snapshot.session;
         _items = snapshot.items;
+        _expandedMessageIds
+            .removeWhere((id) => !_items.any((item) => item.id == id));
         _pendingApproval = snapshot.pendingApproval;
         _hasEventGap = snapshot.hasEventGap;
       });
@@ -236,10 +248,12 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       _replaceItem(clientMessageId, optimistic.copyWith(pending: false));
     } on BridgeException catch (error) {
-      _replaceItem(clientMessageId, optimistic.copyWith(
-        pending: false,
-        failed: true,
-      ));
+      _replaceItem(
+          clientMessageId,
+          optimistic.copyWith(
+            pending: false,
+            failed: true,
+          ));
       setState(() => _error = error.message);
     } finally {
       if (mounted) {
@@ -364,12 +378,14 @@ class _ChatScreenState extends State<ChatScreen> {
   void _replaceItem(String id, ChatItem replacement) {
     if (!mounted) return;
     setState(() {
-      _items = _items.map((item) => item.id == id ? replacement : item).toList();
+      _items =
+          _items.map((item) => item.id == id ? replacement : item).toList();
     });
   }
 
   void _upsertItem(ChatItem item) {
-    final existingIndex = _items.indexWhere((existing) => existing.id == item.id);
+    final existingIndex =
+        _items.indexWhere((existing) => existing.id == item.id);
     if (existingIndex >= 0) {
       _items = _items
           .map((existing) => existing.id == item.id ? item : existing)
@@ -377,6 +393,14 @@ class _ChatScreenState extends State<ChatScreen> {
     } else {
       _items = [..._items, item];
     }
+  }
+
+  void _toggleExpanded(String id) {
+    setState(() {
+      if (!_expandedMessageIds.add(id)) {
+        _expandedMessageIds.remove(id);
+      }
+    });
   }
 
   void _scrollToBottom() {
@@ -427,17 +451,31 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 class _ChatBubble extends StatelessWidget {
-  const _ChatBubble({required this.item});
+  const _ChatBubble({
+    required this.item,
+    required this.expanded,
+    required this.onToggleExpanded,
+  });
+
+  static const double _collapsedMaxHeight = 280;
 
   final ChatItem item;
+  final bool expanded;
+  final VoidCallback onToggleExpanded;
 
   @override
   Widget build(BuildContext context) {
     final isUser = item.role == ChatItemRole.user;
+    final isAssistant = item.role == ChatItemRole.assistant;
+    final isCollapsible = _isCollapsible(item.text);
     final colorScheme = Theme.of(context).colorScheme;
-    final background =
-        isUser ? colorScheme.primaryContainer : colorScheme.surfaceContainerHigh;
+    final background = isUser
+        ? colorScheme.primaryContainer
+        : colorScheme.surfaceContainerHigh;
     final alignment = isUser ? Alignment.centerRight : Alignment.centerLeft;
+    final content = isAssistant
+        ? _MarkdownMessage(text: item.text)
+        : SelectableText(item.text);
 
     return Align(
       alignment: alignment,
@@ -453,7 +491,29 @@ class _ChatBubble extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SelectableText(item.text),
+                  _MessageBody(
+                    collapsed: isCollapsible && !expanded,
+                    background: background,
+                    child: content,
+                  ),
+                  if (isCollapsible) ...[
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      icon: Icon(
+                        expanded
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        size: 18,
+                      ),
+                      label: Text(expanded ? 'Collapse' : 'Show full response'),
+                      onPressed: onToggleExpanded,
+                    ),
+                  ],
                   if (item.pending || item.failed) ...[
                     const SizedBox(height: 6),
                     Row(
@@ -473,6 +533,105 @@ class _ChatBubble extends StatelessWidget {
                   ],
                 ],
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _isCollapsible(String text) {
+    return text.length > 1200 || '\n'.allMatches(text).length >= 18;
+  }
+}
+
+class _MessageBody extends StatelessWidget {
+  const _MessageBody({
+    required this.child,
+    required this.collapsed,
+    required this.background,
+  });
+
+  final Widget child;
+  final bool collapsed;
+  final Color background;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!collapsed) return child;
+
+    return SizedBox(
+      height: _ChatBubble._collapsedMaxHeight,
+      child: ClipRect(
+        child: Stack(
+          children: [
+            SingleChildScrollView(
+              physics: const NeverScrollableScrollPhysics(),
+              child: child,
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 56,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        background.withValues(alpha: 0),
+                        background,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MarkdownMessage extends StatelessWidget {
+  const _MarkdownMessage({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final bodyStyle = theme.textTheme.bodyMedium;
+    final codeStyle = bodyStyle?.copyWith(
+      fontFamily: 'monospace',
+      backgroundColor: colorScheme.surfaceContainerHighest,
+    );
+
+    return MarkdownBody(
+      data: text,
+      selectable: true,
+      softLineBreak: true,
+      styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+        p: bodyStyle,
+        pPadding: const EdgeInsets.only(bottom: 6),
+        blockSpacing: 8,
+        listIndent: 20,
+        code: codeStyle,
+        codeblockPadding: const EdgeInsets.all(10),
+        codeblockDecoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        blockquotePadding: const EdgeInsets.only(left: 10),
+        blockquoteDecoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: colorScheme.outlineVariant,
+              width: 3,
             ),
           ),
         ),
