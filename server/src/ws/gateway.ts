@@ -3,7 +3,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import type { BridgeConfig } from "../config.js";
 import type { Logger } from "../logger.js";
 import { TokenBucketRateLimiter } from "../security/rate-limit.js";
-import type { ApprovalAction } from "../types/domain.js";
+import type { ApprovalAction, SessionBackend } from "../types/domain.js";
 import type { RequestEnvelope } from "../types/protocol.js";
 import { AuthService } from "./auth.js";
 import { err, ok, safeJsonParse } from "./protocol.js";
@@ -135,6 +135,7 @@ export class WsGateway {
         case "session.run": {
           const session = await this.sessions.run({
             name: String(request.name),
+            backend: normalizeBackend(request.backend),
             workspaceId: typeof request.workspace_id === "string" ? request.workspace_id : undefined,
             cwd: typeof request.cwd === "string" ? request.cwd : undefined
           });
@@ -180,6 +181,12 @@ export class WsGateway {
             String(request.command)
           )));
           break;
+        case "file.read":
+          this.send(socket, ok(request.id, await this.sessions.readFile(
+            String(request.session_id),
+            String(request.path)
+          )));
+          break;
         case "events.sync": {
           const after = Number(request.after ?? request.after_seq);
           const events = this.sessions.syncEvents(String(request.session_id), after);
@@ -209,6 +216,11 @@ export class WsGateway {
   }
 }
 
+function normalizeBackend(value: unknown): SessionBackend {
+  if (value === "codex" || value === "opencode" || value === "cursor") return value;
+  return "claude";
+}
+
 function normalizeErrorCode(message: string): string {
   const known = [
     "SESSION_NOT_FOUND",
@@ -218,6 +230,7 @@ function normalizeErrorCode(message: string): string {
     "APPROVAL_NOT_FOUND",
     "APPROVAL_EXPIRED",
     "EVENT_GAP",
+    "FILE_NOT_FOUND",
     "RATE_LIMITED",
     "MESSAGE_TOO_LARGE",
     "PATH_NOT_ALLOWED",

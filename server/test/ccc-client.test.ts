@@ -5,6 +5,20 @@ describe("CccClient", () => {
   it("builds run commands for the current ccc CLI", () => {
     const client = new CccClient({ cccBin: "ccc", cccTimeoutMs: 1000 });
     expect(client.buildRunSessionArgs("demo", "/tmp/demo")).toEqual(["run", "demo", "--cwd", "/tmp/demo"]);
+    expect(client.buildRunSessionArgs("demo", "/tmp/demo", "codex")).toEqual([
+      "run",
+      "demo",
+      "--cwd",
+      "/tmp/demo",
+      "--codex"
+    ]);
+    expect(client.buildRunSessionArgs("demo", "/tmp/demo", "opencode")).toEqual([
+      "run",
+      "demo",
+      "--cwd",
+      "/tmp/demo",
+      "--opencode"
+    ]);
   });
 
   it("builds execFile commands without shell strings", () => {

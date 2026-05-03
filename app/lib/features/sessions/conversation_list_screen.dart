@@ -189,6 +189,7 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
   final _workspaceNameController = TextEditingController();
   final _cwdController = TextEditingController();
 
+  SessionBackend _selectedBackend = SessionBackend.claude;
   _WorkspaceMode _workspaceMode = _WorkspaceMode.existing;
   List<WorkspaceSummary> _workspaces = const [];
   String? _selectedWorkspaceId;
@@ -222,6 +223,38 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              DropdownButtonFormField<SessionBackend>(
+                initialValue: _selectedBackend,
+                decoration: const InputDecoration(
+                  labelText: 'Agent',
+                  prefixIcon: Icon(Icons.smart_toy_outlined),
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: SessionBackend.claude,
+                    child: Text('Claude Code'),
+                  ),
+                  DropdownMenuItem(
+                    value: SessionBackend.codex,
+                    child: Text('Codex'),
+                  ),
+                  DropdownMenuItem(
+                    value: SessionBackend.opencode,
+                    child: Text('Opencode'),
+                  ),
+                  DropdownMenuItem(
+                    value: SessionBackend.cursor,
+                    child: Text('Cursor'),
+                  ),
+                ],
+                onChanged: _isSubmitting
+                    ? null
+                    : (value) {
+                        if (value == null) return;
+                        setState(() => _selectedBackend = value);
+                      },
+              ),
+              const SizedBox(height: 12),
               if (_isLoadingWorkspaces)
                 const LinearProgressIndicator()
               else
@@ -493,10 +526,11 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
       }
 
       final sessionId = await sessionController.createSession(
-            name: _resolvedSessionName(),
-            workspaceId: workspaceId,
-            cwd: cwd,
-          );
+        name: _resolvedSessionName(),
+        backend: _selectedBackend,
+        workspaceId: workspaceId,
+        cwd: cwd,
+      );
       if (!mounted) return;
       if (sessionId == null || sessionId.isEmpty) {
         setState(() {
@@ -607,8 +641,9 @@ class _ConnectionBanner extends StatelessWidget {
         state == BridgeConnectionState.error;
     return Container(
       width: double.infinity,
-      color:
-          connected ? colorScheme.secondaryContainer : colorScheme.errorContainer,
+      color: connected
+          ? colorScheme.secondaryContainer
+          : colorScheme.errorContainer,
       padding: const EdgeInsets.only(left: 16, right: 8, top: 6, bottom: 6),
       child: Row(
         children: [
@@ -673,6 +708,7 @@ class _SessionTile extends StatelessWidget {
       subtitle: Text(
         [
           session.state.name,
+          sessionBackendLabel(session.backend),
           if (path != null) path,
           if (session.lastMessage != null) session.lastMessage!,
         ].join(' · '),
@@ -720,7 +756,8 @@ class _SessionTile extends StatelessWidget {
     if (index >= 0) {
       return '~/workspace/${cwd.substring(index + marker.length)}';
     }
-    final segments = cwd.split('/').where((segment) => segment.isNotEmpty).toList();
+    final segments =
+        cwd.split('/').where((segment) => segment.isNotEmpty).toList();
     if (segments.length <= 3) return cwd;
     return '.../${segments.sublist(segments.length - 3).join('/')}';
   }

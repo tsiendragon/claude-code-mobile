@@ -1,10 +1,11 @@
 import { randomBytes, createHash } from "node:crypto";
+import { open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { BridgeConfig } from "../config.js";
 import type { CccClient } from "../ccc/ccc-client.js";
 import type { CccTranscriptItem } from "../ccc/ccc-types.js";
 import { assertAllowedCwd, isPathInside } from "../security/paths.js";
-import type { ApprovalAction, ApprovalRecord, SessionRecord, SessionState } from "../types/domain.js";
+import type { ApprovalAction, ApprovalRecord, SessionBackend, SessionRecord, SessionState } from "../types/domain.js";
 import type { SessionSummary } from "../types/protocol.js";
 import type { WorkspaceService } from "../workspaces/workspace-service.js";
 import { InMemoryEventStore } from "./event-store.js";
@@ -12,6 +13,7 @@ import { canPerform, transitionState } from "./state-machine.js";
 
 export type SessionRunInput = {
   name: string;
+  backend?: SessionBackend;
   cwd?: string;
   workspaceId?: string;
 };
@@ -44,7 +46,7 @@ export class SessionManager {
           const realCwd = await assertAllowedCwd(cccSession.cwd, this.config.allowedPaths, {
             allowHiddenCwd: this.config.allowHiddenCwd
           });
-          this.ensureSession(cccSession.name, realCwd, cccSession.state ?? "ready");
+          this.ensureSession(cccSession.name, realCwd, cccSession.state ?? "ready", cccSession.name, cccSession.backend);
         } catch {
           continue;
         }
@@ -58,10 +60,11 @@ export class SessionManager {
       ? await this.workspaces.resolveWorkspaceCwd(input.workspaceId)
       : await this.resolveManualCwd(input.cwd);
     const name = normalizeSessionDisplayName(input.name);
+    const backend = input.backend ?? "claude";
     const cccName = buildCccName(name);
-    const result = await this.ccc.runSession(cccName, realCwd);
+    const result = await this.ccc.runSession(cccName, realCwd, backend);
     if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
-    return this.ensureSession(cccName, realCwd, "ready", name);
+    return this.ensureSession(cccName, realCwd, "ready", name, backend);
   }
 
   listWorkspaces() {
@@ -89,6 +92,34 @@ export class SessionManager {
   syncEvents(sessionId: string, afterSeq: number) {
     this.requireSession(sessionId);
     return this.events.listAfter(sessionId, afterSeq);
+  }
+
+  async readFile(sessionId: string, requestedPath: string) {
+    const session = this.requireSession(sessionId);
+    const realPath = await this.resolveSessionFilePath(session, requestedPath);
+    const info = await stat(realPath);
+    if (!info.isFile()) throw new Error("FILE_NOT_FOUND: path is not a file");
+
+    const maxBytes = Math.max(1, this.config.maxEventBytes);
+    const byteLength = Math.min(info.size, maxBytes);
+    const buffer = Buffer.alloc(byteLength);
+    const handle = await open(realPath, "r");
+    try {
+      await handle.read(buffer, 0, byteLength, 0);
+    } finally {
+      await handle.close();
+    }
+
+    const relativePath = path.relative(session.cwd, realPath);
+    return {
+      path: realPath,
+      relative_path: relativePath,
+      name: path.basename(realPath),
+      bytes: info.size,
+      truncated: info.size > byteLength,
+      language: detectLanguage(realPath),
+      content: buffer.toString("utf8")
+    };
   }
 
   async kill(sessionId: string) {
@@ -220,12 +251,19 @@ export class SessionManager {
     return session;
   }
 
-  private ensureSession(cccName: string, cwd: string, state: SessionState, displayName = cccName): SessionRecord {
+  private ensureSession(
+    cccName: string,
+    cwd: string,
+    state: SessionState,
+    displayName = cccName,
+    backend: SessionBackend = "claude"
+  ): SessionRecord {
     const existingId = this.cccToBridge.get(cccName);
     if (existingId) {
       const existing = this.sessions.get(existingId);
       if (existing) {
         this.updateState(existing, state);
+        existing.backend = backend;
         return existing;
       }
     }
@@ -233,7 +271,7 @@ export class SessionManager {
     const session: SessionRecord = {
       sessionId: `sess_${randomBytes(10).toString("base64url")}`,
       name: displayName,
-      backend: "claude",
+      backend,
       cwd,
       cccName,
       state,
@@ -279,6 +317,26 @@ export class SessionManager {
     return assertAllowedCwd(cwd, this.config.allowedPaths, {
       allowHiddenCwd: this.config.allowHiddenCwd
     });
+  }
+
+  private async resolveSessionFilePath(session: SessionRecord, requestedPath: string): Promise<string> {
+    const trimmed = requestedPath.trim();
+    if (trimmed.length === 0 || trimmed.includes("\0")) {
+      throw new Error("PATH_NOT_ALLOWED: file path is required");
+    }
+    const candidate = path.isAbsolute(trimmed)
+      ? path.resolve(trimmed)
+      : path.resolve(session.cwd, trimmed);
+    let realPath: string;
+    try {
+      realPath = await realpath(candidate);
+    } catch {
+      throw new Error("FILE_NOT_FOUND: file does not exist");
+    }
+    if (!isPathInside(realPath, session.cwd)) {
+      throw new Error("PATH_NOT_ALLOWED: file is outside session cwd");
+    }
+    return realPath;
   }
 
   private assertApprovalPathsInSession(session: SessionRecord, approval: ApprovalRecord) {
@@ -344,4 +402,57 @@ function buildCccName(displayName: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
   return `${slug || "session"}-${randomBytes(4).toString("hex")}`;
+}
+
+function detectLanguage(filePath: string): string {
+  const base = path.basename(filePath).toLowerCase();
+  if (base === "dockerfile") return "dockerfile";
+  if (base === "makefile") return "makefile";
+  const ext = path.extname(base).replace(/^\./, "");
+  const languages: Record<string, string> = {
+    bash: "shell",
+    c: "c",
+    cc: "cpp",
+    cjs: "javascript",
+    cpp: "cpp",
+    cs: "csharp",
+    css: "css",
+    csv: "csv",
+    dart: "dart",
+    env: "dotenv",
+    go: "go",
+    gradle: "gradle",
+    h: "c",
+    hpp: "cpp",
+    html: "html",
+    java: "java",
+    js: "javascript",
+    json: "json",
+    jsx: "jsx",
+    kt: "kotlin",
+    lock: "text",
+    lua: "lua",
+    m: "objective-c",
+    markdown: "markdown",
+    md: "markdown",
+    mjs: "javascript",
+    php: "php",
+    py: "python",
+    r: "r",
+    rb: "ruby",
+    rs: "rust",
+    scss: "scss",
+    sh: "shell",
+    sql: "sql",
+    swift: "swift",
+    toml: "toml",
+    ts: "typescript",
+    tsx: "tsx",
+    txt: "text",
+    xml: "xml",
+    yaml: "yaml",
+    yml: "yaml",
+    zsh: "shell"
+  };
+  return languages[ext] ?? ext ?? "text";
 }

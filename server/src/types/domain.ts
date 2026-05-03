@@ -6,6 +6,8 @@ export type SessionState =
   | "error"
   | "ended";
 
+export type SessionBackend = "claude" | "codex" | "opencode" | "cursor";
+
 export type ApprovalAction = "yes" | "no" | "approve" | "reject" | "always" | "choice";
 
 export type ApprovalScope = {
@@ -37,7 +39,7 @@ export type SessionCapabilities = {
 export type SessionRecord = {
   sessionId: string;
   name: string;
-  backend: "claude";
+  backend: SessionBackend;
   cwd: string;
   cccName: string;
   state: SessionState;

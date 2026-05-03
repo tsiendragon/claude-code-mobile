@@ -17,11 +17,45 @@ enum SessionState {
   unknown,
 }
 
+enum SessionBackend {
+  claude,
+  codex,
+  opencode,
+  cursor,
+  unknown,
+}
+
 SessionState sessionStateFromWire(String? value) {
   return SessionState.values.firstWhere(
     (state) => state.name == value,
     orElse: () => SessionState.unknown,
   );
+}
+
+SessionBackend sessionBackendFromWire(String? value) {
+  return SessionBackend.values.firstWhere(
+    (backend) => backend.name == value,
+    orElse: () => SessionBackend.claude,
+  );
+}
+
+String sessionBackendToWire(SessionBackend backend) {
+  return switch (backend) {
+    SessionBackend.codex => 'codex',
+    SessionBackend.opencode => 'opencode',
+    SessionBackend.cursor => 'cursor',
+    SessionBackend.claude || SessionBackend.unknown => 'claude',
+  };
+}
+
+String sessionBackendLabel(SessionBackend backend) {
+  return switch (backend) {
+    SessionBackend.claude => 'Claude Code',
+    SessionBackend.codex => 'Codex',
+    SessionBackend.opencode => 'Opencode',
+    SessionBackend.cursor => 'Cursor',
+    SessionBackend.unknown => 'Claude Code',
+  };
 }
 
 class BridgeError {
@@ -127,7 +161,7 @@ class SessionSummary {
 
   final String sessionId;
   final String name;
-  final String backend;
+  final SessionBackend backend;
   final SessionState state;
   final int lastSeq;
   final String? cwd;
@@ -136,16 +170,15 @@ class SessionSummary {
 
   factory SessionSummary.fromJson(Map<String, Object?> json) {
     return SessionSummary(
-      sessionId: json['session_id'] as String? ??
-          json['sessionId'] as String? ??
-          '',
+      sessionId:
+          json['session_id'] as String? ?? json['sessionId'] as String? ?? '',
       name: json['name'] as String? ?? 'Session',
-      backend: json['backend'] as String? ?? 'claude',
+      backend: sessionBackendFromWire(json['backend'] as String?),
       state: sessionStateFromWire(json['state'] as String?),
       lastSeq: json['last_seq'] as int? ?? json['lastSeq'] as int? ?? 0,
       cwd: json['cwd'] as String?,
-      lastMessage: json['last_message'] as String? ??
-          json['lastMessage'] as String?,
+      lastMessage:
+          json['last_message'] as String? ?? json['lastMessage'] as String?,
       needsAttention: json['needs_attention'] as bool? ??
           json['needsAttention'] as bool? ??
           false,
@@ -175,6 +208,63 @@ class WorkspaceSummary {
       path: json['path'] as String? ?? '',
     );
   }
+}
+
+class FilePreview {
+  const FilePreview({
+    required this.path,
+    required this.relativePath,
+    required this.name,
+    required this.content,
+    required this.bytes,
+    required this.truncated,
+    required this.language,
+  });
+
+  final String path;
+  final String relativePath;
+  final String name;
+  final String content;
+  final int bytes;
+  final bool truncated;
+  final String language;
+
+  bool get isMarkdown =>
+      language == 'markdown' ||
+      name.toLowerCase().endsWith('.md') ||
+      name.toLowerCase().endsWith('.markdown');
+
+  factory FilePreview.fromJson(Map<String, Object?> json) {
+    return FilePreview(
+      path: json['path'] as String? ?? '',
+      relativePath: json['relative_path'] as String? ??
+          json['relativePath'] as String? ??
+          json['path'] as String? ??
+          '',
+      name: json['name'] as String? ?? 'file',
+      content: json['content'] as String? ?? '',
+      bytes: json['bytes'] as int? ?? 0,
+      truncated: json['truncated'] as bool? ?? false,
+      language: json['language'] as String? ?? 'text',
+    );
+  }
+}
+
+class FileReference {
+  const FileReference({
+    required this.path,
+    required this.name,
+    required this.language,
+  });
+
+  final String path;
+  final String name;
+  final String language;
+
+  bool get isMarkdown =>
+      language == 'markdown' ||
+      name.toLowerCase().endsWith('.md') ||
+      name.toLowerCase().endsWith('.markdown');
 }
 
 class ChatStateSnapshot {
@@ -244,8 +334,9 @@ class ChatStateSnapshot {
     return ChatStateSnapshot(
       session: session,
       items: items,
-      lastSeq:
-          json['last_seq'] as int? ?? json['lastSeq'] as int? ?? session.lastSeq,
+      lastSeq: json['last_seq'] as int? ??
+          json['lastSeq'] as int? ??
+          session.lastSeq,
       pendingApproval: rawApproval is Map
           ? PendingApproval.fromJson(Map<String, Object?>.from(rawApproval))
           : null,
@@ -403,6 +494,114 @@ String _stripAssistantMarker(String input) {
       .trimRight();
 }
 
+List<FileReference> extractFileReferences(String text) {
+  final references = <FileReference>[];
+  final seen = <String>{};
+
+  for (final match in _filePathPattern.allMatches(text)) {
+    if (_isUrlPathMatch(text, match.start)) continue;
+    final rawPath = match.group(1);
+    if (rawPath == null) continue;
+    final path = _cleanFilePath(rawPath);
+    if (!_isPreviewablePath(path) || !seen.add(path)) continue;
+    references.add(FileReference(
+      path: path,
+      name: _fileName(path),
+      language: _languageForPath(path),
+    ));
+  }
+
+  return references;
+}
+
+bool _isUrlPathMatch(String text, int matchStart) {
+  final windowStart = matchStart - 8 < 0 ? 0 : matchStart - 8;
+  final prefix = text.substring(windowStart, matchStart);
+  return prefix.contains('://') ||
+      prefix.endsWith('http:') ||
+      prefix.endsWith('https:');
+}
+
+final RegExp _filePathPattern = RegExp(
+  r'((?:~|/|\.{1,2}/)?[A-Za-z0-9._~@%+\-\/]+\.(?:markdown|bash|cjs|cpp|css|csv|dart|env|go|gradle|hpp|html|ini|java|json|jsx|lock|lua|mjs|php|py|rb|rs|scss|sh|sql|swift|toml|tsx|txt|xml|yaml|yml|zsh|cc|cs|js|kt|md|ts|c|h|m|r))',
+  caseSensitive: false,
+);
+
+String _cleanFilePath(String input) {
+  return input
+      .trim()
+      .replaceAll(RegExp("^[`\"'(<\\[]+"), '')
+      .replaceAll(RegExp("[`\"')>\\],，。；;:]+\$"), '');
+}
+
+bool _isPreviewablePath(String path) {
+  if (path.isEmpty) return false;
+  if (path.startsWith('http://') || path.startsWith('https://')) return false;
+  if (path.contains('..')) return false;
+  return _languageForPath(path) != 'unknown';
+}
+
+String _fileName(String path) {
+  final normalized = path.replaceAll('\\', '/');
+  final index = normalized.lastIndexOf('/');
+  return index >= 0 ? normalized.substring(index + 1) : normalized;
+}
+
+String _languageForPath(String path) {
+  final name = _fileName(path).toLowerCase();
+  if (name == 'dockerfile') return 'dockerfile';
+  if (name == 'makefile') return 'makefile';
+  final dot = name.lastIndexOf('.');
+  final ext = dot >= 0 ? name.substring(dot + 1) : '';
+  const languages = <String, String>{
+    'bash': 'shell',
+    'c': 'c',
+    'cc': 'cpp',
+    'cjs': 'javascript',
+    'cpp': 'cpp',
+    'cs': 'csharp',
+    'css': 'css',
+    'csv': 'csv',
+    'dart': 'dart',
+    'env': 'dotenv',
+    'go': 'go',
+    'gradle': 'gradle',
+    'h': 'c',
+    'hpp': 'cpp',
+    'html': 'html',
+    'ini': 'ini',
+    'java': 'java',
+    'js': 'javascript',
+    'json': 'json',
+    'jsx': 'jsx',
+    'kt': 'kotlin',
+    'lock': 'text',
+    'lua': 'lua',
+    'm': 'objective-c',
+    'markdown': 'markdown',
+    'md': 'markdown',
+    'mjs': 'javascript',
+    'php': 'php',
+    'py': 'python',
+    'r': 'r',
+    'rb': 'ruby',
+    'rs': 'rust',
+    'scss': 'scss',
+    'sh': 'shell',
+    'sql': 'sql',
+    'swift': 'swift',
+    'toml': 'toml',
+    'ts': 'typescript',
+    'tsx': 'tsx',
+    'txt': 'text',
+    'xml': 'xml',
+    'yaml': 'yaml',
+    'yml': 'yaml',
+    'zsh': 'shell',
+  };
+  return languages[ext] ?? 'unknown';
+}
+
 class PendingApproval {
   const PendingApproval({
     required this.approvalId,
@@ -430,12 +629,10 @@ class PendingApproval {
 
   factory PendingApproval.fromJson(Map<String, Object?> json) {
     return PendingApproval(
-      approvalId: json['approval_id'] as String? ??
-          json['approvalId'] as String? ??
-          '',
-      sessionId: json['session_id'] as String? ??
-          json['sessionId'] as String? ??
-          '',
+      approvalId:
+          json['approval_id'] as String? ?? json['approvalId'] as String? ?? '',
+      sessionId:
+          json['session_id'] as String? ?? json['sessionId'] as String? ?? '',
       operationKind: json['operation_kind'] as String? ??
           json['operationKind'] as String? ??
           'unknown',
@@ -446,10 +643,10 @@ class PendingApproval {
           const <String>[],
       expiresAt: DateTime.tryParse(json['expires_at'] as String? ?? '') ??
           DateTime.now().toUtc(),
-      diffSummary: json['diff_summary'] as String? ??
-          json['diffSummary'] as String?,
-      contentHash: json['content_hash'] as String? ??
-          json['contentHash'] as String?,
+      diffSummary:
+          json['diff_summary'] as String? ?? json['diffSummary'] as String?,
+      contentHash:
+          json['content_hash'] as String? ?? json['contentHash'] as String?,
       status: json['status'] as String? ?? 'pending',
     );
   }

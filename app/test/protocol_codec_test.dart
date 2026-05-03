@@ -49,6 +49,19 @@ void main() {
     expect(workspace.path, '/home/user/workspace/demo-app');
   });
 
+  test('parses session backend summaries', () {
+    final session = SessionSummary.fromJson({
+      'session_id': 'sess_abcdefgh',
+      'name': 'Demo',
+      'backend': 'codex',
+      'state': 'ready',
+      'last_seq': 0,
+    });
+
+    expect(session.backend, SessionBackend.codex);
+    expect(sessionBackendLabel(session.backend), 'Codex');
+  });
+
   test('builds chat snapshot from attach recent events', () {
     final snapshot = ChatStateSnapshot.fromAttachResponse({
       'session': {
@@ -117,6 +130,39 @@ void main() {
       },
     );
 
-    expect(item.text, 'I can help with that.\n\n- First option\n- Second option');
+    expect(
+        item.text, 'I can help with that.\n\n- First option\n- Second option');
+  });
+
+  test('extracts previewable file references from assistant text', () {
+    final references = extractFileReferences(
+      'Write(gemma4_e4b_report.md)\n'
+      '报告已生成，保存至 /home/tsien/workspace/test/gemma4_e4b_report.md。\n'
+      'Also wrote src/main.ts and ignored https://example.com/readme.md',
+    );
+
+    expect(references.map((item) => item.path), [
+      'gemma4_e4b_report.md',
+      '/home/tsien/workspace/test/gemma4_e4b_report.md',
+      'src/main.ts',
+    ]);
+    expect(references.first.isMarkdown, isTrue);
+    expect(references.last.language, 'typescript');
+  });
+
+  test('parses file previews', () {
+    final preview = FilePreview.fromJson({
+      'path': '/home/tsien/workspace/test/report.md',
+      'relative_path': 'report.md',
+      'name': 'report.md',
+      'content': '# Report',
+      'bytes': 8,
+      'truncated': false,
+      'language': 'markdown',
+    });
+
+    expect(preview.isMarkdown, isTrue);
+    expect(preview.relativePath, 'report.md');
+    expect(preview.content, '# Report');
   });
 }

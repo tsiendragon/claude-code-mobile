@@ -69,7 +69,7 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             Text(session.name),
             Text(
-              session.state.name,
+              '${sessionBackendLabel(session.backend)} · ${session.state.name}',
               style: Theme.of(context).textTheme.labelMedium,
             ),
           ],
@@ -117,6 +117,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             item: item,
                             expanded: _expandedMessageIds.contains(item.id),
                             onToggleExpanded: () => _toggleExpanded(item.id),
+                            onOpenFile: _openFilePreview,
                           ),
                         if (_pendingApproval != null)
                           Padding(
@@ -403,6 +404,17 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  void _openFilePreview(FileReference reference) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _FilePreviewScreen(
+          sessionId: widget.session.sessionId,
+          reference: reference,
+        ),
+      ),
+    );
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
@@ -455,6 +467,7 @@ class _ChatBubble extends StatelessWidget {
     required this.item,
     required this.expanded,
     required this.onToggleExpanded,
+    required this.onOpenFile,
   });
 
   static const double _collapsedMaxHeight = 280;
@@ -462,6 +475,7 @@ class _ChatBubble extends StatelessWidget {
   final ChatItem item;
   final bool expanded;
   final VoidCallback onToggleExpanded;
+  final ValueChanged<FileReference> onOpenFile;
 
   @override
   Widget build(BuildContext context) {
@@ -476,6 +490,9 @@ class _ChatBubble extends StatelessWidget {
     final content = isAssistant
         ? _MarkdownMessage(text: item.text)
         : SelectableText(item.text);
+    final fileReferences = isAssistant
+        ? extractFileReferences(item.text)
+        : const <FileReference>[];
 
     return Align(
       alignment: alignment,
@@ -512,6 +529,13 @@ class _ChatBubble extends StatelessWidget {
                       ),
                       label: Text(expanded ? 'Collapse' : 'Show full response'),
                       onPressed: onToggleExpanded,
+                    ),
+                  ],
+                  if (fileReferences.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    _FileReferenceList(
+                      references: fileReferences,
+                      onOpen: onOpenFile,
                     ),
                   ],
                   if (item.pending || item.failed) ...[
@@ -638,4 +662,234 @@ class _MarkdownMessage extends StatelessWidget {
       ),
     );
   }
+}
+
+class _FileReferenceList extends StatelessWidget {
+  const _FileReferenceList({
+    required this.references,
+    required this.onOpen,
+  });
+
+  final List<FileReference> references;
+  final ValueChanged<FileReference> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final reference in references)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: OutlinedButton.icon(
+              icon: Icon(_fileIcon(reference)),
+              label: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  reference.name,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              onPressed: () => onOpen(reference),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _FilePreviewScreen extends StatefulWidget {
+  const _FilePreviewScreen({
+    required this.sessionId,
+    required this.reference,
+  });
+
+  final String sessionId;
+  final FileReference reference;
+
+  @override
+  State<_FilePreviewScreen> createState() => _FilePreviewScreenState();
+}
+
+class _FilePreviewScreenState extends State<_FilePreviewScreen> {
+  late Future<FilePreview> _preview;
+
+  @override
+  void initState() {
+    super.initState();
+    _preview = context.read<BridgeClient>().readFile(
+          sessionId: widget.sessionId,
+          path: widget.reference.path,
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.reference.name),
+      ),
+      body: FutureBuilder<FilePreview>(
+        future: _preview,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return _FilePreviewError(
+              message: snapshot.error.toString(),
+              onRetry: () {
+                setState(() {
+                  _preview = context.read<BridgeClient>().readFile(
+                        sessionId: widget.sessionId,
+                        path: widget.reference.path,
+                      );
+                });
+              },
+            );
+          }
+          final preview = snapshot.data;
+          if (preview == null) {
+            return _FilePreviewError(
+              message: 'File preview is empty.',
+              onRetry: () {
+                setState(() {
+                  _preview = context.read<BridgeClient>().readFile(
+                        sessionId: widget.sessionId,
+                        path: widget.reference.path,
+                      );
+                });
+              },
+            );
+          }
+          return _FilePreviewBody(preview: preview);
+        },
+      ),
+    );
+  }
+}
+
+class _FilePreviewBody extends StatelessWidget {
+  const _FilePreviewBody({required this.preview});
+
+  final FilePreview preview;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: theme.colorScheme.surfaceContainerHighest,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SelectableText(
+                  preview.relativePath,
+                  style: theme.textTheme.bodySmall,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${preview.language} · ${_formatBytes(preview.bytes)}',
+                  style: theme.textTheme.labelMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (preview.truncated)
+          Container(
+            color: theme.colorScheme.errorContainer,
+            padding: const EdgeInsets.all(8),
+            child: const Text('Preview truncated because the file is large.'),
+          ),
+        Expanded(
+          child: preview.isMarkdown
+              ? SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: _MarkdownMessage(text: preview.content),
+                )
+              : _CodePreview(content: preview.content),
+        ),
+      ],
+    );
+  }
+}
+
+class _CodePreview extends StatelessWidget {
+  const _CodePreview({required this.content});
+
+  final String content;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Scrollbar(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SelectableText(
+            content,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              color: colorScheme.onSurface,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FilePreviewError extends StatelessWidget {
+  const _FilePreviewError({
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 32),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+              onPressed: onRetry,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+IconData _fileIcon(FileReference reference) {
+  if (reference.isMarkdown) return Icons.article_outlined;
+  return Icons.code;
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  final kb = bytes / 1024;
+  if (kb < 1024) return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} KB';
+  final mb = kb / 1024;
+  return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
 }

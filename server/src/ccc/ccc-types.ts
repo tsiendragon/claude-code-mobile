@@ -1,8 +1,9 @@
-import type { ApprovalRecord, SessionState } from "../types/domain.js";
+import type { ApprovalRecord, SessionBackend, SessionState } from "../types/domain.js";
 
 export type CccSession = {
   name: string;
   cwd?: string;
+  backend?: SessionBackend;
   state?: SessionState;
   alive?: boolean;
 };

@@ -1,4 +1,4 @@
-import { mkdtemp, realpath } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -66,8 +66,9 @@ describe("SessionManager", () => {
     await workspaces.create("demo-app");
     const cccCalls: Array<{ name: string; cwd: string }> = [];
     const ccc = {
-      runSession: async (name: string, cwd: string) => {
+      runSession: async (name: string, cwd: string, backend: string) => {
         cccCalls.push({ name, cwd });
+        expect(backend).toBe("codex");
         return { ok: true, stdout: "", stderr: "", data: { name } } as const;
       }
     } as unknown as CccClient;
@@ -75,11 +76,13 @@ describe("SessionManager", () => {
     const manager = new SessionManager(cfg, ccc, workspaces, new InMemoryEventStore(20));
     const session = await manager.run({
       name: "Feature branch / prod?",
+      backend: "codex",
       workspaceId: "demo-app"
     });
     const realRoot = await realpath(root);
 
     expect(session.name).toBe("Feature branch / prod?");
+    expect(session.backend).toBe("codex");
     expect(session.cccName).toBe(cccCalls[0].name);
     expect(cccCalls[0].name).toMatch(/^feature-branch-prod-[a-f0-9]{8}$/);
     expect(cccCalls[0].cwd).toBe(path.join(realRoot, "demo-app"));
@@ -138,5 +141,35 @@ describe("SessionManager", () => {
     await expect(manager.sendCommand(session.sessionId, "cmsg_abcdef", "1")).resolves.toEqual({ delivered: true });
     expect(calls).toEqual(["input:1", "key:Enter"]);
     expect(session.state).toBe("thinking");
+  });
+
+  it("reads files only from the session cwd", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const workspaces = new WorkspaceService(cfg);
+    await workspaces.create("demo-app");
+    const ccc = {
+      runSession: async (name: string) => {
+        return { ok: true, stdout: "", stderr: "", data: { name } } as const;
+      }
+    } as unknown as CccClient;
+
+    const manager = new SessionManager(cfg, ccc, workspaces, new InMemoryEventStore(20));
+    const session = await manager.run({
+      name: "Demo",
+      workspaceId: "demo-app"
+    });
+    await mkdir(session.cwd, { recursive: true });
+    await writeFile(path.join(session.cwd, "report.md"), "# Report\n\nHello", "utf8");
+    await writeFile(path.join(root, "outside.md"), "# Outside", "utf8");
+
+    await expect(manager.readFile(session.sessionId, "report.md")).resolves.toMatchObject({
+      name: "report.md",
+      relative_path: "report.md",
+      language: "markdown",
+      content: "# Report\n\nHello",
+      truncated: false
+    });
+    await expect(manager.readFile(session.sessionId, path.join(root, "outside.md"))).rejects.toThrow("PATH_NOT_ALLOWED");
   });
 });

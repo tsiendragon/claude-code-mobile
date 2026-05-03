@@ -184,6 +184,7 @@ class BridgeClient extends ChangeNotifier {
 
   Future<String> runSession({
     required String name,
+    SessionBackend backend = SessionBackend.claude,
     String? cwd,
     String? workspaceId,
   }) async {
@@ -197,11 +198,8 @@ class BridgeClient extends ChangeNotifier {
 
     final payload = <String, Object?>{
       'name': name,
-      'backend': 'claude',
-      if (hasWorkspaceId)
-        'workspace_id': workspaceId
-      else
-        'cwd': cwd,
+      'backend': sessionBackendToWire(backend),
+      if (hasWorkspaceId) 'workspace_id': workspaceId else 'cwd': cwd,
     };
     final data = await request('session.run', payload);
     return data['session_id'] as String? ?? '';
@@ -254,6 +252,17 @@ class BridgeClient extends ChangeNotifier {
     await request('message.interrupt', {'session_id': sessionId});
   }
 
+  Future<FilePreview> readFile({
+    required String sessionId,
+    required String path,
+  }) async {
+    final data = await request('file.read', {
+      'session_id': sessionId,
+      'path': path,
+    });
+    return FilePreview.fromJson(data);
+  }
+
   Future<Map<String, Object?>> request(
     String type, [
     Map<String, Object?> data = const {},
@@ -265,7 +274,8 @@ class BridgeClient extends ChangeNotifier {
     final requestId = 'req_${++_requestCounter}';
     final completer = Completer<Map<String, Object?>>();
     _pending[requestId] = completer;
-    _channel!.sink.add(encodeBridgeRequest(type: type, id: requestId, data: data));
+    _channel!.sink
+        .add(encodeBridgeRequest(type: type, id: requestId, data: data));
     return completer.future.timeout(
       const Duration(seconds: 30),
       onTimeout: () {

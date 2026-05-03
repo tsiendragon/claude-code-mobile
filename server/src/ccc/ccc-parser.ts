@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ApprovalAction, ApprovalRecord } from "../types/domain.js";
+import type { ApprovalAction, ApprovalRecord, SessionBackend } from "../types/domain.js";
 import type { CccReadResult, CccSession, CccTranscriptItem } from "./ccc-types.js";
 
 export function parseCccSessionList(stdout: string): CccSession[] {
@@ -12,6 +12,7 @@ export function parseCccSessionList(stdout: string): CccSession[] {
     return {
       name: record.name,
       cwd: typeof record.cwd === "string" ? record.cwd : undefined,
+      backend: normalizeBackend(record.backend ?? record.command),
       state: normalizeState(record.state),
       alive: typeof record.alive === "boolean" ? record.alive : undefined
     };
@@ -205,6 +206,13 @@ function normalizeState(value: unknown) {
     value === "error" ||
     value === "ended"
   ) {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeBackend(value: unknown): SessionBackend | undefined {
+  if (value === "claude" || value === "codex" || value === "opencode" || value === "cursor") {
     return value;
   }
   return undefined;

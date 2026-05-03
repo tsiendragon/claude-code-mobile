@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { BridgeConfig } from "../config.js";
+import type { SessionBackend } from "../types/domain.js";
 import { parseCccRead, parseCccSessionList } from "./ccc-parser.js";
 import type { CccCommandResult, CccReadResult, CccSession } from "./ccc-types.js";
 
@@ -13,8 +14,8 @@ export class CccClient {
     return this.run(["ps", "--json"], parseCccSessionList);
   }
 
-  runSession(name: string, cwd: string): Promise<CccCommandResult<{ name: string }>> {
-    return this.run(this.buildRunSessionArgs(name, cwd), () => ({ name }));
+  runSession(name: string, cwd: string, backend: SessionBackend): Promise<CccCommandResult<{ name: string }>> {
+    return this.run(this.buildRunSessionArgs(name, cwd, backend), () => ({ name }));
   }
 
   killSession(name: string): Promise<CccCommandResult<{ name: string }>> {
@@ -49,8 +50,11 @@ export class CccClient {
     return { file: this.config.cccBin, args };
   }
 
-  buildRunSessionArgs(name: string, cwd: string): string[] {
-    return ["run", name, "--cwd", cwd];
+  buildRunSessionArgs(name: string, cwd: string, backend: SessionBackend = "claude"): string[] {
+    const args = ["run", name, "--cwd", cwd];
+    const flag = backendFlag(backend);
+    if (flag) args.push(flag);
+    return args;
   }
 
   private async run<T>(args: string[], parse: (stdout: string) => T): Promise<CccCommandResult<T>> {
@@ -72,5 +76,18 @@ export class CccClient {
         message: err.message
       };
     }
+  }
+}
+
+function backendFlag(backend: SessionBackend): string | undefined {
+  switch (backend) {
+    case "claude":
+      return undefined;
+    case "codex":
+      return "--codex";
+    case "opencode":
+      return "--opencode";
+    case "cursor":
+      return "--cursor";
   }
 }

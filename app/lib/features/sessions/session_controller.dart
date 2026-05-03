@@ -33,12 +33,14 @@ class SessionController extends ChangeNotifier {
 
   Future<String?> createSession({
     required String name,
+    SessionBackend backend = SessionBackend.claude,
     String? cwd,
     String? workspaceId,
   }) async {
     try {
       final sessionId = await _client.runSession(
         name: name,
+        backend: backend,
         cwd: cwd,
         workspaceId: workspaceId,
       );

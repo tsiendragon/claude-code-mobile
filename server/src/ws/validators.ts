@@ -13,6 +13,7 @@ const requestTypes = new Set([
   "message.approve",
   "message.interrupt",
   "command.send",
+  "file.read",
   "events.sync"
 ]);
 
@@ -51,6 +52,7 @@ export function validateRequest(input: unknown, maxPromptBytes: number): Validat
   if (input.type === "session.run") {
     if (typeof input.name !== "string" || input.name.trim().length === 0) return invalid("name is required");
     if (input.name.trim().length > 80) return invalid("name must be 80 characters or fewer");
+    if (input.backend !== undefined && !isBackend(input.backend)) return invalid("valid backend is required");
     const hasWorkspaceId = typeof input.workspace_id === "string" && input.workspace_id.length > 0;
     const hasCwd = typeof input.cwd === "string" && input.cwd.length > 0;
     if (hasWorkspaceId === hasCwd) return invalid("exactly one of workspace_id or cwd is required");
@@ -81,6 +83,15 @@ export function validateRequest(input: unknown, maxPromptBytes: number): Validat
     }
   }
 
+  if (input.type === "file.read") {
+    if (typeof input.path !== "string" || input.path.trim().length === 0) {
+      return invalid("file path is required");
+    }
+    if (input.path.length > 4096 || input.path.includes("\0")) {
+      return invalid("file path is invalid");
+    }
+  }
+
   if (input.type === "events.sync") {
     const after = input.after ?? input.after_seq;
     if (!Number.isInteger(after) || Number(after) < 0) {
@@ -107,6 +118,7 @@ function requiresSession(type: string): boolean {
     "message.approve",
     "message.interrupt",
     "command.send",
+    "file.read",
     "events.sync"
   ].includes(type);
 }
@@ -117,4 +129,8 @@ function isSessionId(value: unknown): boolean {
 
 function isClientMessageId(value: unknown): boolean {
   return typeof value === "string" && /^(cmsg|msg)_[a-zA-Z0-9_-]{6,}$/.test(value);
+}
+
+function isBackend(value: unknown): boolean {
+  return value === "claude" || value === "codex" || value === "opencode" || value === "cursor";
 }

@@ -1,4 +1,4 @@
-import type { ApprovalAction, SessionState } from "./domain.js";
+import type { ApprovalAction, SessionBackend, SessionState } from "./domain.js";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -19,6 +19,7 @@ export type AuthRequest = RequestEnvelope & {
 export type SessionRunRequest = RequestEnvelope & {
   type: "session.run";
   name: string;
+  backend?: SessionBackend;
   cwd?: string;
   workspace_id?: string;
 };
@@ -46,6 +47,11 @@ export type EventsSyncRequest = SessionIdRequest & {
   after_seq?: number;
 };
 
+export type FileReadRequest = SessionIdRequest & {
+  type: "file.read";
+  path: string;
+};
+
 export type SupportedRequest =
   | AuthRequest
   | RequestEnvelope
@@ -53,6 +59,7 @@ export type SupportedRequest =
   | SessionIdRequest
   | MessageSendRequest
   | MessageApproveRequest
+  | FileReadRequest
   | EventsSyncRequest;
 
 export type ResponseEnvelope =
@@ -67,7 +74,7 @@ export type ResponseEnvelope =
 export type SessionSummary = {
   session_id: string;
   name: string;
-  backend: "claude";
+  backend: SessionBackend;
   cwd: string;
   state: SessionState;
   last_seq: number;

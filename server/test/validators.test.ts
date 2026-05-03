@@ -38,8 +38,21 @@ describe("protocol validators", () => {
       type: "session.run",
       id: "req_1",
       name: "Demo",
+      backend: "codex",
       workspace_id: "demo-app"
     }, 1000).ok).toBe(true);
+  });
+
+  it("rejects unknown session backends", () => {
+    const result = validateRequest({
+      type: "session.run",
+      id: "req_1",
+      name: "Demo",
+      backend: "unknown-agent",
+      workspace_id: "demo-app"
+    }, 1000);
+
+    expect(result).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
   });
 
   it("rejects ambiguous session.run targets", () => {
@@ -75,6 +88,15 @@ describe("protocol validators", () => {
       type: "workspace.create",
       id: "req_1",
       name: "demo-app"
+    }, 1000).ok).toBe(true);
+  });
+
+  it("accepts file.read with a session path", () => {
+    expect(validateRequest({
+      type: "file.read",
+      id: "req_1",
+      session_id: "sess_abcdefgh",
+      path: "report.md"
     }, 1000).ok).toBe(true);
   });
 });

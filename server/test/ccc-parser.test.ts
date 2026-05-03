@@ -17,9 +17,28 @@ describe("ccc parser", () => {
     ]));
 
     expect(sessions).toEqual([
-      { name: "dead-demo", cwd: "/tmp/demo", state: undefined, alive: false },
-      { name: "live-demo", cwd: "/tmp/demo", state: undefined, alive: true }
+      { name: "dead-demo", cwd: "/tmp/demo", backend: undefined, state: undefined, alive: false },
+      { name: "live-demo", cwd: "/tmp/demo", backend: undefined, state: undefined, alive: true }
     ]);
+  });
+
+  it("parses ccc backend from ps output", () => {
+    const sessions = parseCccSessionList(JSON.stringify([
+      {
+        name: "codex-demo",
+        cwd: "/tmp/demo",
+        backend: "codex",
+        alive: true
+      },
+      {
+        name: "opencode-demo",
+        cwd: "/tmp/demo",
+        command: "opencode",
+        alive: true
+      }
+    ]));
+
+    expect(sessions.map((session) => session.backend)).toEqual(["codex", "opencode"]);
   });
 
   it("uses lastResponse from ccc read output as assistant output", () => {
