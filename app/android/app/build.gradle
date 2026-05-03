@@ -25,6 +25,33 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
+
+    signingConfigs {
+        release {
+            def storeFilePath = System.getenv("CCM_ANDROID_STORE_FILE")
+            def storePasswordValue = System.getenv("CCM_ANDROID_STORE_PASSWORD")
+            def keyAliasValue = System.getenv("CCM_ANDROID_KEY_ALIAS")
+            def keyPasswordValue = System.getenv("CCM_ANDROID_KEY_PASSWORD")
+            if (storeFilePath && storePasswordValue && keyAliasValue && keyPasswordValue) {
+                storeFile = file(storeFilePath)
+                storePassword = storePasswordValue
+                keyAlias = keyAliasValue
+                keyPassword = keyPasswordValue
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            def hasReleaseSigning = System.getenv("CCM_ANDROID_STORE_FILE") &&
+                System.getenv("CCM_ANDROID_STORE_PASSWORD") &&
+                System.getenv("CCM_ANDROID_KEY_ALIAS") &&
+                System.getenv("CCM_ANDROID_KEY_PASSWORD")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.release
+            }
+        }
+    }
 }
 
 flutter {
