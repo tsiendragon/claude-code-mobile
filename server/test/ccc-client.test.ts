@@ -13,5 +13,9 @@ describe("CccClient", () => {
       file: "ccc",
       args: ["send", "session", "hello; rm -rf /", "--no-wait"]
     });
+    expect(client.buildCommand(["key", "session", "Enter"])).toEqual({
+      file: "ccc",
+      args: ["key", "session", "Enter"]
+    });
   });
 });

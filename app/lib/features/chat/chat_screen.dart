@@ -24,7 +24,6 @@ class _ChatScreenState extends State<ChatScreen> {
   SessionSummary? _session;
   List<ChatItem> _items = const [];
   PendingApproval? _pendingApproval;
-  String? _latestOutputSnapshot;
   bool _isLoading = true;
   bool _isSending = false;
   bool _isApproving = false;
@@ -53,11 +52,13 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final session = _session ?? widget.session;
-    final canSend = session.state == SessionState.ready && !_isSending;
+    final canSend =
+        (_canSendText(session.state) || _pendingApproval != null) && !_isSending;
     final canInterrupt = session.state == SessionState.thinking ||
         session.state == SessionState.approval ||
         session.state == SessionState.choosing;
     final inputHint = _inputHint(session.state);
+    final textFieldHint = _textFieldHint(session.state);
 
     return Scaffold(
       appBar: AppBar(
@@ -108,9 +109,6 @@ class _ChatScreenState extends State<ChatScreen> {
                       controller: _scrollController,
                       padding: const EdgeInsets.all(16),
                       children: [
-                        if (_latestOutputSnapshot != null &&
-                            _latestOutputSnapshot!.isNotEmpty)
-                          _SnapshotPanel(text: _latestOutputSnapshot!),
                         for (final item in _items) _ChatBubble(item: item),
                         if (_pendingApproval != null)
                           Padding(
@@ -144,9 +142,9 @@ class _ChatScreenState extends State<ChatScreen> {
                           enabled: canSend,
                           minLines: 1,
                           maxLines: 5,
-                          decoration: const InputDecoration(
-                            hintText: 'Send prompt',
-                            border: OutlineInputBorder(),
+                          decoration: InputDecoration(
+                            hintText: textFieldHint,
+                            border: const OutlineInputBorder(),
                           ),
                           onSubmitted: (_) => canSend ? _send() : null,
                         ),
@@ -186,7 +184,6 @@ class _ChatScreenState extends State<ChatScreen> {
         _session = snapshot.session;
         _items = snapshot.items;
         _pendingApproval = snapshot.pendingApproval;
-        _latestOutputSnapshot = snapshot.latestOutputSnapshot;
         _hasEventGap = snapshot.hasEventGap;
       });
       _scrollToBottom();
@@ -202,6 +199,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _send() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
+    final currentState = (_session ?? widget.session).state;
+    final useCommand = _pendingApproval != null ||
+        currentState == SessionState.approval ||
+        currentState == SessionState.choosing;
 
     final clientMessageId =
         'cmsg_${DateTime.now().microsecondsSinceEpoch.toString()}';
@@ -220,11 +221,19 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
 
     try {
-      await context.read<BridgeClient>().sendMessage(
-            sessionId: widget.session.sessionId,
-            clientMessageId: clientMessageId,
-            text: text,
-          );
+      if (useCommand) {
+        await context.read<BridgeClient>().sendCommand(
+              sessionId: widget.session.sessionId,
+              clientMessageId: clientMessageId,
+              command: text,
+            );
+      } else {
+        await context.read<BridgeClient>().sendMessage(
+              sessionId: widget.session.sessionId,
+              clientMessageId: clientMessageId,
+              text: text,
+            );
+      }
       _replaceItem(clientMessageId, optimistic.copyWith(pending: false));
     } on BridgeException catch (error) {
       _replaceItem(clientMessageId, optimistic.copyWith(
@@ -292,11 +301,7 @@ class _ChatScreenState extends State<ChatScreen> {
         case 'assistant_message':
           final item = ChatItem.fromAssistantEvent(envelope, event.payload);
           if (item.text.isNotEmpty) {
-            if (item.snapshot) {
-              _latestOutputSnapshot = item.text;
-            } else {
-              _items = [..._items, item];
-            }
+            _upsertItem(item);
           }
           break;
         case 'user_message':
@@ -363,6 +368,17 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  void _upsertItem(ChatItem item) {
+    final existingIndex = _items.indexWhere((existing) => existing.id == item.id);
+    if (existingIndex >= 0) {
+      _items = _items
+          .map((existing) => existing.id == item.id ? item : existing)
+          .toList();
+    } else {
+      _items = [..._items, item];
+    }
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
@@ -381,9 +397,9 @@ class _ChatScreenState extends State<ChatScreen> {
       case SessionState.thinking:
         return 'Assistant is working. You can interrupt or wait.';
       case SessionState.approval:
-        return 'Approval is required before sending another prompt.';
+        return 'Use the approval buttons, or type a reply if the CLI is asking for one.';
       case SessionState.choosing:
-        return 'A choice is required before sending another prompt.';
+        return 'Type your choice and send it.';
       case SessionState.error:
         return 'Session is in error. Refresh or start a new session.';
       case SessionState.ended:
@@ -392,47 +408,21 @@ class _ChatScreenState extends State<ChatScreen> {
         return 'Session state is unknown. Refresh before sending.';
     }
   }
-}
 
-class _SnapshotPanel extends StatelessWidget {
-  const _SnapshotPanel({required this.text});
+  bool _canSendText(SessionState state) {
+    return state == SessionState.ready ||
+        state == SessionState.approval ||
+        state == SessionState.choosing;
+  }
 
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.article_outlined, size: 18),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Latest output',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              SelectableText(
-                text,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontFamily: 'monospace',
-                    ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  String _textFieldHint(SessionState state) {
+    switch (state) {
+      case SessionState.approval:
+      case SessionState.choosing:
+        return 'Reply to prompt';
+      default:
+        return 'Send prompt';
+    }
   }
 }
 
@@ -464,26 +454,18 @@ class _ChatBubble extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   SelectableText(item.text),
-                  if (item.pending || item.failed || item.snapshot) ...[
+                  if (item.pending || item.failed) ...[
                     const SizedBox(height: 6),
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          item.failed
-                              ? Icons.error_outline
-                              : item.pending
-                                  ? Icons.schedule
-                                  : Icons.article_outlined,
+                          item.failed ? Icons.error_outline : Icons.schedule,
                           size: 14,
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          item.failed
-                              ? 'failed'
-                              : item.pending
-                                  ? 'sending'
-                                  : 'snapshot',
+                          item.failed ? 'failed' : 'sending',
                           style: Theme.of(context).textTheme.labelSmall,
                         ),
                       ],

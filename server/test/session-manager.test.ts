@@ -107,4 +107,36 @@ describe("SessionManager", () => {
     expect(session.name).toBe("测试 会话");
     expect(cccName).toMatch(/^session-[a-f0-9]{8}$/);
   });
+
+  it("submits command replies with Enter while a session is choosing", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const workspaces = new WorkspaceService(cfg);
+    await workspaces.create("demo-app");
+    const calls: string[] = [];
+    const ccc = {
+      runSession: async (name: string) => {
+        return { ok: true, stdout: "", stderr: "", data: { name } } as const;
+      },
+      input: async (_name: string, command: string) => {
+        calls.push(`input:${command}`);
+        return { ok: true, stdout: "", stderr: "", data: { name: "demo" } } as const;
+      },
+      key: async (_name: string, key: string) => {
+        calls.push(`key:${key}`);
+        return { ok: true, stdout: "", stderr: "", data: { name: "demo", key } } as const;
+      }
+    } as unknown as CccClient;
+
+    const manager = new SessionManager(cfg, ccc, workspaces, new InMemoryEventStore(20));
+    const session = await manager.run({
+      name: "Demo",
+      workspaceId: "demo-app"
+    });
+    session.state = "choosing";
+
+    await expect(manager.sendCommand(session.sessionId, "cmsg_abcdef", "1")).resolves.toEqual({ delivered: true });
+    expect(calls).toEqual(["input:1", "key:Enter"]);
+    expect(session.state).toBe("thinking");
+  });
 });

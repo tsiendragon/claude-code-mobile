@@ -213,33 +213,43 @@ class ChatStateSnapshot {
     );
 
     final eventItems = <ChatItem>[];
-    String? latestOutputSnapshot;
     for (final event in _eventsFromJson(rawEvents)) {
       final item = ChatItem.fromEvent(event);
       if (item == null) continue;
-      if (item.snapshot) {
-        latestOutputSnapshot = item.text;
-      } else {
-        eventItems.add(item);
-      }
+      eventItems.add(item);
     }
+
+    final parsedItems = rawItems is List
+        ? rawItems
+            .whereType<Map>()
+            .map((item) => ChatItem.fromJson(Map<String, Object?>.from(item)))
+            .where((item) => item.text.isNotEmpty)
+            .toList()
+        : eventItems;
+    final legacySnapshot = json['latest_output_snapshot'] as String? ??
+        json['latestOutputSnapshot'] as String?;
+    final items = [
+      ...parsedItems,
+      if (parsedItems.isEmpty &&
+          legacySnapshot != null &&
+          legacySnapshot.trim().isNotEmpty)
+        ChatItem(
+          id: 'latest_output_snapshot',
+          role: ChatItemRole.assistant,
+          text: formatAssistantText(legacySnapshot),
+          snapshot: true,
+        ),
+    ];
 
     return ChatStateSnapshot(
       session: session,
-      items: rawItems is List
-          ? rawItems
-              .whereType<Map>()
-              .map((item) => ChatItem.fromJson(Map<String, Object?>.from(item)))
-              .toList()
-          : eventItems,
+      items: items,
       lastSeq:
           json['last_seq'] as int? ?? json['lastSeq'] as int? ?? session.lastSeq,
       pendingApproval: rawApproval is Map
           ? PendingApproval.fromJson(Map<String, Object?>.from(rawApproval))
           : null,
-      latestOutputSnapshot: json['latest_output_snapshot'] as String? ??
-          json['latestOutputSnapshot'] as String? ??
-          latestOutputSnapshot,
+      latestOutputSnapshot: null,
       hasEventGap: json['has_event_gap'] as bool? ??
           json['hasEventGap'] as bool? ??
           false,
@@ -293,13 +303,17 @@ class ChatItem {
 
   factory ChatItem.fromJson(Map<String, Object?> json) {
     final roleName = json['role'] as String? ?? 'assistant';
+    final role = ChatItemRole.values.firstWhere(
+      (role) => role.name == roleName,
+      orElse: () => ChatItemRole.assistant,
+    );
+    final rawText = json['text'] as String? ?? json['content'] as String? ?? '';
     return ChatItem(
       id: json['id'] as String? ?? json['message_id'] as String? ?? '',
-      role: ChatItemRole.values.firstWhere(
-        (role) => role.name == roleName,
-        orElse: () => ChatItemRole.assistant,
-      ),
-      text: json['text'] as String? ?? json['content'] as String? ?? '',
+      role: role,
+      text: role == ChatItemRole.assistant
+          ? formatAssistantText(rawText)
+          : rawText,
       seq: json['seq'] as int?,
       snapshot: json['snapshot'] as bool? ?? false,
     );
@@ -328,7 +342,9 @@ class ChatItem {
           payload['messageId'] as String? ??
           'evt_${envelope.seq}',
       role: ChatItemRole.assistant,
-      text: payload['text'] as String? ?? payload['content'] as String? ?? '',
+      text: formatAssistantText(
+        payload['text'] as String? ?? payload['content'] as String? ?? '',
+      ),
       seq: envelope.seq,
       snapshot: payload['snapshot'] as bool? ?? false,
     );
@@ -347,6 +363,44 @@ class ChatItem {
         return null;
     }
   }
+}
+
+String formatAssistantText(String input) {
+  final cleaned = <String>[];
+  for (final rawLine in input.replaceAll('\r', '').split('\n')) {
+    final line = _cleanTerminalLine(rawLine);
+    final trimmed = line.trimLeft();
+    if (trimmed.startsWith('✻')) continue;
+    if (trimmed.startsWith('●')) {
+      cleaned.add(_stripAssistantMarker(trimmed));
+    } else {
+      cleaned.add(line.replaceFirst(RegExp(r'^\s{0,2}'), '').trimRight());
+    }
+  }
+
+  while (cleaned.isNotEmpty && cleaned.first.trim().isEmpty) {
+    cleaned.removeAt(0);
+  }
+  while (cleaned.isNotEmpty && cleaned.last.trim().isEmpty) {
+    cleaned.removeLast();
+  }
+
+  return cleaned.join('\n').replaceAll(RegExp(r'\n{3,}'), '\n\n');
+}
+
+String _cleanTerminalLine(String input) {
+  return input
+      .replaceAll(RegExp(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])'), '')
+      .replaceAll('\u00a0', ' ')
+      .replaceAll(RegExp('[↓↑]'), ' ')
+      .trimRight();
+}
+
+String _stripAssistantMarker(String input) {
+  return input
+      .replaceFirst(RegExp(r'^●\s*'), '')
+      .replaceFirst(RegExp(r'^[\u0300-\u036f\u0591-\u05c7\s]+'), '')
+      .trimRight();
 }
 
 class PendingApproval {

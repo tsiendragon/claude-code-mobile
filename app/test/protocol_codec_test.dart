@@ -83,8 +83,40 @@ void main() {
       ],
     });
 
-    expect(snapshot.items, hasLength(1));
+    expect(snapshot.items, hasLength(2));
     expect(snapshot.items.first.text, 'hello');
-    expect(snapshot.latestOutputSnapshot, 'world');
+    expect(snapshot.items.last.text, 'world');
+    expect(snapshot.latestOutputSnapshot, isNull);
+  });
+
+  test('formats Claude terminal assistant output for chat bubbles', () {
+    final item = ChatItem.fromAssistantEvent(
+      const BridgeEventEnvelope(
+        sessionId: 'sess_abcdefgh',
+        seq: 2,
+        event: DomainEvent(
+          kind: 'assistant_message',
+          payload: {
+            'kind': 'assistant_message',
+            'text': '● ִ I can help↓with that.\n'
+                '\n'
+                '  - First option\n'
+                '  - Second option\n'
+                '✻ Cogitated for 2s',
+            'snapshot': true,
+          },
+        ),
+      ),
+      {
+        'text': '● ִ I can help↓with that.\n'
+            '\n'
+            '  - First option\n'
+            '  - Second option\n'
+            '✻ Cogitated for 2s',
+        'snapshot': true,
+      },
+    );
+
+    expect(item.text, 'I can help with that.\n\n- First option\n- Second option');
   });
 }

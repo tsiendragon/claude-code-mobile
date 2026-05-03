@@ -22,6 +22,17 @@ describe("protocol validators", () => {
     expect(result).toMatchObject({ ok: false, code: "MESSAGE_TOO_LARGE" });
   });
 
+  it("rejects large command replies", () => {
+    const result = validateRequest({
+      type: "command.send",
+      id: "req_1",
+      session_id: "sess_abcdefgh",
+      client_msg_id: "cmsg_abcdef",
+      command: "hello"
+    }, 4);
+    expect(result).toMatchObject({ ok: false, code: "MESSAGE_TOO_LARGE" });
+  });
+
   it("accepts session.run with a workspace id", () => {
     expect(validateRequest({
       type: "session.run",

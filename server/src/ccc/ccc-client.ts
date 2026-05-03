@@ -37,6 +37,10 @@ export class CccClient {
     return this.run(["input", name, command], () => ({ name }));
   }
 
+  key(name: string, key: string): Promise<CccCommandResult<{ name: string; key: string }>> {
+    return this.run(["key", name, key], () => ({ name, key }));
+  }
+
   read(name: string): Promise<CccCommandResult<CccReadResult>> {
     return this.run(["read", name, "--json"], parseCccRead);
   }

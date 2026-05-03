@@ -67,6 +67,9 @@ export function validateRequest(input: unknown, maxPromptBytes: number): Validat
   if (input.type === "command.send") {
     if (!isClientMessageId(input.client_msg_id)) return invalid("valid client_msg_id is required");
     if (typeof input.command !== "string" || input.command.length === 0) return invalid("command is required");
+    if (Buffer.byteLength(input.command, "utf8") > maxPromptBytes) {
+      return { ok: false, code: "MESSAGE_TOO_LARGE", message: "command exceeds max_prompt_bytes" };
+    }
   }
 
   if (input.type === "message.approve") {

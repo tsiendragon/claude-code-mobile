@@ -7,9 +7,17 @@ export type CccSession = {
   alive?: boolean;
 };
 
+export type CccTranscriptItem = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  snapshot?: boolean;
+};
+
 export type CccReadResult = {
   state: SessionState;
   output?: string;
+  items?: CccTranscriptItem[];
   pendingApproval?: Omit<ApprovalRecord, "approvalId" | "sessionId" | "expiresAt" | "status">;
 };
 

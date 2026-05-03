@@ -224,6 +224,18 @@ class BridgeClient extends ChangeNotifier {
     });
   }
 
+  Future<void> sendCommand({
+    required String sessionId,
+    required String clientMessageId,
+    required String command,
+  }) async {
+    await request('command.send', {
+      'session_id': sessionId,
+      'client_msg_id': clientMessageId,
+      'command': command,
+    });
+  }
+
   Future<void> approve({
     required String sessionId,
     required String approvalId,

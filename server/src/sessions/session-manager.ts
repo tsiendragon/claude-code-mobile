@@ -2,6 +2,7 @@ import { randomBytes, createHash } from "node:crypto";
 import path from "node:path";
 import type { BridgeConfig } from "../config.js";
 import type { CccClient } from "../ccc/ccc-client.js";
+import type { CccTranscriptItem } from "../ccc/ccc-types.js";
 import { assertAllowedCwd, isPathInside } from "../security/paths.js";
 import type { ApprovalAction, ApprovalRecord, SessionRecord, SessionState } from "../types/domain.js";
 import type { SessionSummary } from "../types/protocol.js";
@@ -19,6 +20,7 @@ export class SessionManager {
   private readonly sessions = new Map<string, SessionRecord>();
   private readonly cccToBridge = new Map<string, string>();
   private readonly approvalResults = new Map<string, unknown>();
+  private readonly transcriptItems = new Map<string, CccTranscriptItem[]>();
   private poller?: { start(sessionId: string): void; stop(sessionId: string): void };
 
   constructor(
@@ -74,9 +76,11 @@ export class SessionManager {
     await this.applySnapshot(sessionId);
     const session = this.requireSession(sessionId);
     const recent = this.events.listAfter(sessionId, Math.max(0, session.lastSeq - this.config.eventBufferSize));
+    const items = this.transcriptItems.get(sessionId);
     return {
       session,
       last_seq: session.lastSeq,
+      ...(items && items.length > 0 ? { items } : {}),
       recent_events: Array.isArray(recent) ? recent : [],
       pending_approval: session.pendingApproval
     };
@@ -94,6 +98,7 @@ export class SessionManager {
     if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
     this.updateState(session, "ended");
     this.events.clear(sessionId);
+    this.transcriptItems.delete(sessionId);
     this.poller?.stop(sessionId);
     return { killed: true };
   }
@@ -144,13 +149,15 @@ export class SessionManager {
 
   async sendCommand(sessionId: string, clientMsgId: string, command: string) {
     const session = this.requireSession(sessionId);
-    if (!canPerform(session.state, "message.send", session.capabilities)) {
+    if (!canPerform(session.state, "command.send", session.capabilities)) {
       throw new Error("SESSION_STATE_INVALID");
     }
     this.append(session, { kind: "user_message", clientMsgId, text: command, textBytes: Buffer.byteLength(command) });
-    const result = await this.ccc.input(session.cccName, command);
+    const inputResult = await this.ccc.input(session.cccName, command);
+    const result = inputResult.ok ? await this.ccc.key(session.cccName, "Enter") : inputResult;
     if (result.ok) {
       this.append(session, { kind: "message_delivered", clientMsgId });
+      this.updateState(session, "thinking");
       return { delivered: true };
     }
     this.append(session, {
@@ -185,6 +192,9 @@ export class SessionManager {
     const result = await this.ccc.read(session.cccName);
     if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
     this.updateState(session, result.data.state);
+    if (result.data.items && result.data.items.length > 0) {
+      this.transcriptItems.set(sessionId, result.data.items);
+    }
     if (result.data.output) {
       const hash = createHash("sha256").update(normalizeSnapshot(result.data.output)).digest("hex");
       if (hash !== session.lastSnapshotHash) {

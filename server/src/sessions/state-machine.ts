@@ -1,6 +1,6 @@
 import type { SessionState } from "../types/domain.js";
 
-export type SessionOperation = "message.send" | "approve" | "interrupt" | "kill";
+export type SessionOperation = "message.send" | "command.send" | "approve" | "interrupt" | "kill";
 
 export function canPerform(
   state: SessionState,
@@ -15,6 +15,9 @@ export function canPerform(
     if (state === "ready") return true;
     if (state === "thinking") return capabilities.canSendWhenThinking;
     if (state === "error") return capabilities.canSendWhenError;
+  }
+  if (operation === "command.send") {
+    return state === "ready" || state === "approval" || state === "choosing";
   }
   return false;
 }
