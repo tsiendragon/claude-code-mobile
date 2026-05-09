@@ -19,6 +19,14 @@ class CcmApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xff58a6ff),
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+      ),
+      themeMode: ThemeMode.system,
       home: const _BootstrapScreen(),
     );
   }

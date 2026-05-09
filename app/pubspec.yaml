@@ -1,7 +1,7 @@
 name: ccm_mobile
 description: Android-focused Flutter MVP client for ccm Bridge Server.
 publish_to: "none"
-version: 0.1.7+8
+version: 0.1.8+9
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

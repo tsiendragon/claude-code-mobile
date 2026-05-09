@@ -4,6 +4,17 @@ enum ConnectionMode {
   wireguard,
 }
 
+String connectionModeLabel(ConnectionMode mode) {
+  switch (mode) {
+    case ConnectionMode.direct:
+      return 'Direct';
+    case ConnectionMode.tailscale:
+      return 'Tailscale';
+    case ConnectionMode.wireguard:
+      return 'WireGuard';
+  }
+}
+
 class ServerConfig {
   const ServerConfig({
     required this.serverUrl,

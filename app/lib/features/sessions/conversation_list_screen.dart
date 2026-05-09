@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/config/server_config.dart';
+import '../../core/config/server_config_controller.dart';
 import '../../protocol/client.dart';
 import '../../protocol/models.dart';
 import '../chat/chat_screen.dart';
@@ -31,6 +33,7 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
   Widget build(BuildContext context) {
     final sessions = context.watch<SessionController>();
     final client = context.watch<BridgeClient>();
+    final serverConfig = context.watch<ServerConfigController>().config;
 
     return Scaffold(
       appBar: AppBar(
@@ -68,6 +71,11 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
               state: client.state,
               error: client.lastError,
               onReconnect: _reconnect,
+              onSettings: _openServerSettings,
+            ),
+            _ConnectionProfilePanel(
+              config: serverConfig,
+              state: client.state,
               onSettings: _openServerSettings,
             ),
             _SystemStatsPanel(
@@ -711,6 +719,115 @@ class _ConnectionBanner extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _ConnectionProfilePanel extends StatelessWidget {
+  const _ConnectionProfilePanel({
+    required this.config,
+    required this.state,
+    required this.onSettings,
+  });
+
+  final ServerConfig? config;
+  final BridgeConnectionState state;
+  final VoidCallback onSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final config = this.config;
+    if (config == null) return const SizedBox.shrink();
+
+    final mode = config.connectionMode;
+    return Material(
+      color: colorScheme.surface,
+      child: InkWell(
+        onTap: onSettings,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+          child: Row(
+            children: [
+              Icon(_connectionModeIcon(mode), size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${connectionModeLabel(mode)} · ${_connectionStateLabel(state)}',
+                      style: theme.textTheme.labelLarge,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      config.serverUrl.toString(),
+                      style: theme.textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (mode != ConnectionMode.direct)
+                      Text(
+                        _vpnHint(mode),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.secondary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Change connection',
+                icon: const Icon(Icons.tune),
+                onPressed: onSettings,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  IconData _connectionModeIcon(ConnectionMode mode) {
+    switch (mode) {
+      case ConnectionMode.direct:
+        return Icons.lan_outlined;
+      case ConnectionMode.tailscale:
+        return Icons.vpn_lock;
+      case ConnectionMode.wireguard:
+        return Icons.key;
+    }
+  }
+
+  String _vpnHint(ConnectionMode mode) {
+    switch (mode) {
+      case ConnectionMode.direct:
+        return '';
+      case ConnectionMode.tailscale:
+        return 'Tailscale must be connected on this phone.';
+      case ConnectionMode.wireguard:
+        return 'WireGuard must be connected on this phone.';
+    }
+  }
+
+  String _connectionStateLabel(BridgeConnectionState state) {
+    switch (state) {
+      case BridgeConnectionState.connected:
+        return 'Connected';
+      case BridgeConnectionState.connecting:
+        return 'Connecting';
+      case BridgeConnectionState.authenticating:
+        return 'Authenticating';
+      case BridgeConnectionState.reconnecting:
+        return 'Reconnecting';
+      case BridgeConnectionState.error:
+        return 'Error';
+      case BridgeConnectionState.disconnected:
+        return 'Disconnected';
+    }
   }
 }
 

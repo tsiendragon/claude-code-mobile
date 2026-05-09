@@ -20,6 +20,8 @@ class BridgeException implements Exception {
 
 class BridgeClient extends ChangeNotifier {
   static const protocolVersion = 1;
+  static const _fileReferenceHitTtl = Duration(minutes: 10);
+  static const _fileReferenceMissTtl = Duration(seconds: 30);
 
   ServerConfig? _config;
   String? _token;
@@ -32,6 +34,7 @@ class BridgeClient extends ChangeNotifier {
   bool _closedByUser = false;
   final Map<String, Completer<Map<String, Object?>>> _pending = {};
   final Map<String, int> _attachedSessions = {};
+  final Map<String, _FileReferenceCacheEntry> _fileReferenceCache = {};
   final StreamController<BridgeEventEnvelope> _events =
       StreamController<BridgeEventEnvelope>.broadcast();
 
@@ -49,6 +52,7 @@ class BridgeClient extends ChangeNotifier {
   }) {
     final configChanged = _config?.serverUrl != config.serverUrl ||
         _config?.allowPrivateWs != config.allowPrivateWs ||
+        _config?.connectionMode != config.connectionMode ||
         _token != token;
     _config = config;
     _token = token;
@@ -56,6 +60,7 @@ class BridgeClient extends ChangeNotifier {
       _closedByUser = true;
       _reconnectTimer?.cancel();
       _attachedSessions.clear();
+      _fileReferenceCache.clear();
       unawaited(_teardownSocket());
       _setState(BridgeConnectionState.disconnected);
     }
@@ -273,17 +278,63 @@ class BridgeClient extends ChangeNotifier {
     required List<FileReference> references,
   }) async {
     if (references.isEmpty) return const [];
+    final now = DateTime.now();
+    final resolved = <FileReference>[];
+    final missing = <FileReference>[];
+    final seenPaths = <String>{};
+
+    for (final reference in references) {
+      if (!seenPaths.add(reference.path)) continue;
+      final key = _fileReferenceCacheKey(sessionId, reference.path);
+      final cached = _fileReferenceCache[key];
+      if (cached != null && cached.expiresAt.isAfter(now)) {
+        final cachedReference = cached.reference;
+        if (cachedReference != null) resolved.add(cachedReference);
+        continue;
+      }
+      _fileReferenceCache.remove(key);
+      missing.add(reference);
+    }
+
+    if (missing.isEmpty) return resolved;
+
     final data = await request('file.resolve', {
       'session_id': sessionId,
-      'paths': references.map((reference) => reference.path).toList(),
+      'paths': missing.map((reference) => reference.path).toList(),
     });
     final files = data['files'];
-    if (files is! List) return const [];
-    return files
+    if (files is! List) return resolved;
+    final newlyResolved = files
         .whereType<Map>()
         .map((raw) => FileReference.fromJson(Map<String, Object?>.from(raw)))
         .where((reference) => reference.path.isNotEmpty)
         .toList();
+
+    for (final reference in newlyResolved) {
+      _fileReferenceCache[_fileReferenceCacheKey(sessionId, reference.path)] =
+          _FileReferenceCacheEntry.hit(reference, _fileReferenceHitTtl);
+      if (reference.relativePath != null &&
+          reference.relativePath!.isNotEmpty) {
+        _fileReferenceCache[
+                _fileReferenceCacheKey(sessionId, reference.relativePath!)] =
+            _FileReferenceCacheEntry.hit(reference, _fileReferenceHitTtl);
+      }
+      _fileReferenceCache[_fileReferenceCacheKey(sessionId, reference.name)] =
+          _FileReferenceCacheEntry.hit(reference, _fileReferenceHitTtl);
+    }
+
+    for (final requested in missing) {
+      final matched = _matchResolvedReference(requested.path, newlyResolved);
+      final key = _fileReferenceCacheKey(sessionId, requested.path);
+      _fileReferenceCache[key] = matched == null
+          ? _FileReferenceCacheEntry.miss(_fileReferenceMissTtl)
+          : _FileReferenceCacheEntry.hit(matched, _fileReferenceHitTtl);
+    }
+
+    return [
+      ...resolved,
+      ...newlyResolved,
+    ];
   }
 
   Future<Map<String, Object?>> request(
@@ -441,4 +492,59 @@ class BridgeClient extends ChangeNotifier {
         return 5;
     }
   }
+}
+
+String _fileReferenceCacheKey(String sessionId, String path) {
+  return '$sessionId\x00${_normalizeFileReferencePath(path)}';
+}
+
+FileReference? _matchResolvedReference(
+  String requestedPath,
+  List<FileReference> references,
+) {
+  final requested = _normalizeFileReferencePath(requestedPath);
+  for (final reference in references) {
+    final paths = <String>{
+      reference.path,
+      if (reference.relativePath != null) reference.relativePath!,
+      reference.name,
+    }.map(_normalizeFileReferencePath);
+    if (paths.contains(requested)) return reference;
+  }
+  return null;
+}
+
+String _normalizeFileReferencePath(String path) {
+  var normalized = Uri.decodeComponent(path.trim()).replaceAll('\\', '/');
+  while (normalized.startsWith('./')) {
+    normalized = normalized.substring(2);
+  }
+  return normalized;
+}
+
+class _FileReferenceCacheEntry {
+  _FileReferenceCacheEntry({
+    required this.reference,
+    required this.expiresAt,
+  });
+
+  factory _FileReferenceCacheEntry.hit(
+    FileReference reference,
+    Duration ttl,
+  ) {
+    return _FileReferenceCacheEntry(
+      reference: reference,
+      expiresAt: DateTime.now().add(ttl),
+    );
+  }
+
+  factory _FileReferenceCacheEntry.miss(Duration ttl) {
+    return _FileReferenceCacheEntry(
+      reference: null,
+      expiresAt: DateTime.now().add(ttl),
+    );
+  }
+
+  final FileReference? reference;
+  final DateTime expiresAt;
 }

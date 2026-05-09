@@ -33,12 +33,14 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isSending = false;
   bool _isApproving = false;
   bool _hasEventGap = false;
+  bool _showJumpToBottom = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
     _session = widget.session;
+    _scrollController.addListener(_handleScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _attach();
       final client = context.read<BridgeClient>();
@@ -49,6 +51,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _eventSubscription?.cancel();
+    _scrollController.removeListener(_handleScroll);
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -111,25 +114,50 @@ class _ChatScreenState extends State<ChatScreen> {
             Expanded(
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
-                  : ListView(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.all(16),
+                  : Stack(
                       children: [
-                        for (final item in _items)
-                          _ChatBubble(
-                            sessionId: widget.session.sessionId,
-                            item: item,
-                            expanded: _expandedMessageIds.contains(item.id),
-                            onToggleExpanded: () => _toggleExpanded(item.id),
-                            onOpenFile: _openFilePreview,
-                          ),
-                        if (_pendingApproval != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 12),
-                            child: ApprovalCard(
-                              approval: _pendingApproval!,
-                              isSubmitting: _isApproving,
-                              onAction: _approve,
+                        ListView.builder(
+                          controller: _scrollController,
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 72),
+                          itemCount: _items.length +
+                              (_pendingApproval == null ? 0 : 1),
+                          itemBuilder: (context, index) {
+                            if (index < _items.length) {
+                              final item = _items[index];
+                              return _ChatBubble(
+                                key: ValueKey(item.id),
+                                sessionId: widget.session.sessionId,
+                                item: item,
+                                expanded: _expandedMessageIds.contains(item.id),
+                                onToggleExpanded: () =>
+                                    _toggleExpanded(item.id),
+                                onOpenFile: _openFilePreview,
+                              );
+                            }
+
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 12),
+                              child: ApprovalCard(
+                                approval: _pendingApproval!,
+                                isSubmitting: _isApproving,
+                                onAction: _approve,
+                              ),
+                            );
+                          },
+                        ),
+                        if (_showJumpToBottom)
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 12,
+                            child: Center(
+                              child: FilledButton.tonalIcon(
+                                icon: const Icon(Icons.keyboard_arrow_down),
+                                label: const Text('New messages'),
+                                onPressed: _scrollToBottom,
+                              ),
                             ),
                           ),
                       ],
@@ -202,6 +230,7 @@ class _ChatScreenState extends State<ChatScreen> {
             .removeWhere((id) => !_items.any((item) => item.id == id));
         _pendingApproval = snapshot.pendingApproval;
         _hasEventGap = snapshot.hasEventGap;
+        _showJumpToBottom = false;
       });
       _scrollToBottom();
     } on BridgeException catch (error) {
@@ -303,6 +332,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (envelope.sessionId != widget.session.sessionId || !mounted) return;
 
     final event = envelope.event;
+    final shouldAutoScroll = _isNearBottom();
     setState(() {
       switch (event.kind) {
         case 'state_changed':
@@ -377,7 +407,11 @@ class _ChatScreenState extends State<ChatScreen> {
           break;
       }
     });
-    _scrollToBottom();
+    if (shouldAutoScroll) {
+      _scrollToBottom();
+    } else if (_isMessageEvent(event.kind)) {
+      setState(() => _showJumpToBottom = true);
+    }
   }
 
   void _replaceItem(String id, ChatItem replacement) {
@@ -421,13 +455,34 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       if (!_scrollController.hasClients) return;
+      if (_showJumpToBottom && mounted) {
+        setState(() => _showJumpToBottom = false);
+      }
       _scrollController.animateTo(
         _scrollController.position.maxScrollExtent,
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOut,
       );
     });
+  }
+
+  void _handleScroll() {
+    if (!_showJumpToBottom || !_isNearBottom()) return;
+    setState(() => _showJumpToBottom = false);
+  }
+
+  bool _isNearBottom() {
+    if (!_scrollController.hasClients) return true;
+    final position = _scrollController.position;
+    return position.maxScrollExtent - position.pixels < 96;
+  }
+
+  bool _isMessageEvent(String kind) {
+    return kind == 'assistant_message' ||
+        kind == 'user_message' ||
+        kind == 'approval_requested';
   }
 
   String? _inputHint(SessionState state) {
@@ -468,6 +523,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
 class _ChatBubble extends StatelessWidget {
   const _ChatBubble({
+    super.key,
     required this.sessionId,
     required this.item,
     required this.expanded,
