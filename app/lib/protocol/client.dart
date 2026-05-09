@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 
 import '../core/config/server_config.dart';
 import 'codec.dart';
@@ -84,13 +85,17 @@ class BridgeClient extends ChangeNotifier {
     );
 
     try {
-      _channel = WebSocketChannel.connect(config.serverUrl);
+      _channel = IOWebSocketChannel.connect(
+        config.serverUrl,
+        connectTimeout: const Duration(seconds: 5),
+      );
       _subscription = _channel!.stream.listen(
         _handleMessage,
         onDone: _handleDisconnect,
         onError: (Object error) => _handleDisconnect(error),
       );
 
+      await _channel!.ready.timeout(const Duration(seconds: 5));
       _setState(BridgeConnectionState.authenticating);
       await request('auth', {
         'protocol_version': protocolVersion,
@@ -104,9 +109,10 @@ class BridgeClient extends ChangeNotifier {
       await _reattachSessions();
     } catch (error) {
       await _teardownSocket();
-      _lastError = error is BridgeException ? error.message : error.toString();
+      final bridgeError = _connectionError(error);
+      _lastError = bridgeError.message;
       _setState(BridgeConnectionState.error);
-      rethrow;
+      throw bridgeError;
     }
   }
 
@@ -445,9 +451,17 @@ class BridgeClient extends ChangeNotifier {
     _subscription = null;
     final channel = _channel;
     _channel = null;
-    await subscription?.cancel();
+    try {
+      await subscription?.cancel().timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // Ignore teardown failures; the caller is already handling connection state.
+    }
     if (channel != null) {
-      await channel.sink.close();
+      try {
+        await channel.sink.close().timeout(const Duration(seconds: 2));
+      } catch (_) {
+        // Ignore teardown failures; stale sockets should not block UI actions.
+      }
     }
 
     for (final completer in _pending.values) {
@@ -492,6 +506,19 @@ class BridgeClient extends ChangeNotifier {
         return 5;
     }
   }
+}
+
+BridgeException _connectionError(Object error) {
+  if (error is BridgeException) return error;
+  if (error is TimeoutException) {
+    return const BridgeException(
+      'Connection timed out. Check that the VPN or Wi-Fi route can reach the server URL.',
+      code: 'CONNECT_TIMEOUT',
+      retryable: true,
+    );
+  }
+  return BridgeException(error.toString(),
+      code: 'CONNECT_FAILED', retryable: true);
 }
 
 String _fileReferenceCacheKey(String sessionId, String path) {
