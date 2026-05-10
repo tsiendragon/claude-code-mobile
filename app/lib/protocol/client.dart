@@ -22,7 +22,6 @@ class BridgeException implements Exception {
 class BridgeClient extends ChangeNotifier {
   static const protocolVersion = 1;
   static const _fileReferenceHitTtl = Duration(minutes: 10);
-  static const _fileReferenceMissTtl = Duration(seconds: 30);
 
   ServerConfig? _config;
   String? _token;
@@ -294,8 +293,7 @@ class BridgeClient extends ChangeNotifier {
       final key = _fileReferenceCacheKey(sessionId, reference.path);
       final cached = _fileReferenceCache[key];
       if (cached != null && cached.expiresAt.isAfter(now)) {
-        final cachedReference = cached.reference;
-        if (cachedReference != null) resolved.add(cachedReference);
+        resolved.add(cached.reference);
         continue;
       }
       _fileReferenceCache.remove(key);
@@ -331,10 +329,9 @@ class BridgeClient extends ChangeNotifier {
 
     for (final requested in missing) {
       final matched = _matchResolvedReference(requested.path, newlyResolved);
-      final key = _fileReferenceCacheKey(sessionId, requested.path);
-      _fileReferenceCache[key] = matched == null
-          ? _FileReferenceCacheEntry.miss(_fileReferenceMissTtl)
-          : _FileReferenceCacheEntry.hit(matched, _fileReferenceHitTtl);
+      if (matched == null) continue;
+      _fileReferenceCache[_fileReferenceCacheKey(sessionId, requested.path)] =
+          _FileReferenceCacheEntry.hit(matched, _fileReferenceHitTtl);
     }
 
     return [
@@ -565,13 +562,6 @@ class _FileReferenceCacheEntry {
     );
   }
 
-  factory _FileReferenceCacheEntry.miss(Duration ttl) {
-    return _FileReferenceCacheEntry(
-      reference: null,
-      expiresAt: DateTime.now().add(ttl),
-    );
-  }
-
-  final FileReference? reference;
+  final FileReference reference;
   final DateTime expiresAt;
 }

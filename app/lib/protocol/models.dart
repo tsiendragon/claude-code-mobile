@@ -616,9 +616,13 @@ class FileReferenceMatch {
 
 List<FileReferenceMatch> extractFileReferenceMatches(String text) {
   final matches = <FileReferenceMatch>[];
+  final urlSpans = _urlPattern.allMatches(text).toList();
 
   for (final match in _filePathPattern.allMatches(text)) {
-    if (_isUrlPathMatch(text, match.start)) continue;
+    if (_isUrlPathMatch(text, match.start) ||
+        _isInsideUrl(urlSpans, match.start, match.end)) {
+      continue;
+    }
     final rawPath = match.group(1);
     if (rawPath == null) continue;
     final path = _cleanFilePath(rawPath);
@@ -634,6 +638,18 @@ List<FileReferenceMatch> extractFileReferenceMatches(String text) {
   return matches;
 }
 
+final RegExp _urlPattern = RegExp(
+  r'https?://[^\s<>\]]+',
+  caseSensitive: false,
+);
+
+bool _isInsideUrl(List<RegExpMatch> urlSpans, int start, int end) {
+  for (final span in urlSpans) {
+    if (start >= span.start && end <= span.end) return true;
+  }
+  return false;
+}
+
 bool _isUrlPathMatch(String text, int matchStart) {
   final windowStart = matchStart - 8 < 0 ? 0 : matchStart - 8;
   final prefix = text.substring(windowStart, matchStart);
@@ -643,7 +659,7 @@ bool _isUrlPathMatch(String text, int matchStart) {
 }
 
 final RegExp _filePathPattern = RegExp(
-  r'((?:~|/|\.{1,2}/)?[A-Za-z0-9._~@%+\-\/]+\.(?:markdown|bash|cjs|cpp|css|csv|dart|env|go|gradle|hpp|html|ini|java|json|jsx|lock|lua|mjs|php|py|rb|rs|scss|sh|sql|swift|toml|tsx|txt|xml|yaml|yml|zsh|cc|cs|js|kt|md|ts|c|h|m|r))',
+  r"""((?:~|/|\.{1,2}/)?[^\s`"'(<>\[\]{}，。；;:,：]+?\.(?:markdown|bash|cjs|cpp|css|csv|dart|env|go|gradle|hpp|html|ini|java|json|jsx|lock|lua|mjs|php|py|rb|rs|scss|sh|sql|swift|toml|tsx|txt|xml|yaml|yml|zsh|cc|cs|js|kt|md|ts|c|h|m|r))""",
   caseSensitive: false,
 );
 

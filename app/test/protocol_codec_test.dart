@@ -175,16 +175,19 @@ void main() {
     final references = extractFileReferences(
       'Write(gemma4_e4b_report.md)\n'
       '报告已生成，保存至 /home/tsien/workspace/test/gemma4_e4b_report.md。\n'
-      'Also wrote src/main.ts and ignored https://example.com/readme.md',
+      'Also wrote src/main.ts and ignored https://example.com/readme.md\n'
+      '中文文件：研究报告.md',
     );
 
     expect(references.map((item) => item.path), [
       'gemma4_e4b_report.md',
       '/home/tsien/workspace/test/gemma4_e4b_report.md',
       'src/main.ts',
+      '研究报告.md',
     ]);
     expect(references.first.isMarkdown, isTrue);
-    expect(references.last.language, 'typescript');
+    expect(references[2].language, 'typescript');
+    expect(references.last.language, 'markdown');
   });
 
   test('extracts file reference positions for inline links', () {
