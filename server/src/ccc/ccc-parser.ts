@@ -49,13 +49,14 @@ export function parseCccHistory(stdout: string): CccTranscriptItem[] {
     if (!parsed || typeof parsed !== "object") continue;
     const record = parsed as Record<string, unknown>;
     const role = normalizeTranscriptRole(record.role);
-    const content = typeof record.content === "string" ? record.content.trim() : "";
+    const rawContent = typeof record.content === "string" ? record.content.trim() : "";
+    const content = role === "assistant" ? cleanHistoryAssistantContent(rawContent) : rawContent;
     if (!role || content.length === 0) continue;
     if (role === "user" && isControlKeyHistoryEntry(content)) continue;
     items.push({
       id: `hist_${items.length + 1}`,
       role,
-      text: role === "assistant" ? cleanAssistantResponseText(content) : content,
+      text: content,
       createdAt: timestampToIso(record.ts),
       snapshot: record.event_type === "response"
     });
@@ -68,12 +69,14 @@ function isControlKeyHistoryEntry(content: string): boolean {
 }
 
 function parseReadOutput(parsed: Record<string, unknown>): string | undefined {
-  if (typeof parsed.output === "string" && parsed.output.length > 0) return cleanAssistantResponseText(parsed.output);
+  if (typeof parsed.output === "string" && parsed.output.length > 0) {
+    return cleanOptionalAssistantResponseText(parsed.output);
+  }
   if (typeof parsed.lastResponse === "string" && parsed.lastResponse.length > 0) {
-    return cleanAssistantResponseText(parsed.lastResponse);
+    return cleanOptionalAssistantResponseText(parsed.lastResponse);
   }
   if (typeof parsed.last_response === "string" && parsed.last_response.length > 0) {
-    return cleanAssistantResponseText(parsed.last_response);
+    return cleanOptionalAssistantResponseText(parsed.last_response);
   }
   return undefined;
 }
@@ -91,6 +94,23 @@ function timestampToIso(input: unknown): string | undefined {
   if (typeof input !== "number" || !Number.isFinite(input)) return undefined;
   const millis = input > 10_000_000_000 ? input : input * 1000;
   return new Date(millis).toISOString();
+}
+
+function cleanHistoryAssistantContent(input: string): string {
+  const parsedItems = parseTranscriptLines(input.replace(/\r/g, "").split("\n"));
+  const assistantText = parsedItems
+    .filter((item) => item.role === "assistant")
+    .map((item) => item.text)
+    .filter((text) => text.length > 0)
+    .join("\n\n");
+  if (assistantText.length > 0) return assistantText;
+  return cleanOptionalAssistantResponseText(input) ?? "";
+}
+
+function cleanOptionalAssistantResponseText(input: string): string | undefined {
+  const cleaned = cleanAssistantResponseText(input);
+  if (isTerminalChromeResponse(cleaned)) return undefined;
+  return cleaned.length > 0 ? cleaned : undefined;
 }
 
 function parseTranscriptLines(lines: string[]): CccTranscriptItem[] {
@@ -120,7 +140,7 @@ function parseTranscriptLines(lines: string[]): CccTranscriptItem[] {
       continue;
     }
 
-    if (trimmed.startsWith("●")) {
+    if (isAssistantMarkerLine(trimmed)) {
       flushAssistant();
       assistantBuffer = [stripAssistantMarker(trimmed)];
       continue;
@@ -153,7 +173,7 @@ function cleanAssistantResponseText(input: string): string {
     const line = cleanTerminalLine(rawLine);
     const trimmed = line.trim();
     if (isAssistantTerminator(trimmed)) continue;
-    if (trimmed.startsWith("●")) {
+    if (isAssistantMarkerLine(trimmed)) {
       cleaned.push(stripAssistantMarker(trimmed));
     } else {
       cleaned.push(cleanAssistantContinuationLine(line));
@@ -175,9 +195,13 @@ function cleanAssistantContinuationLine(line: string): string {
 
 function stripAssistantMarker(line: string): string {
   return line
-    .replace(/^●\s*/u, "")
+    .replace(/^[●⏺]\s*/u, "")
     .replace(/^[\p{M}\p{Cf}\s]+/u, "")
     .replace(/\s+$/g, "");
+}
+
+function isAssistantMarkerLine(trimmedLine: string): boolean {
+  return trimmedLine.startsWith("●") || trimmedLine.startsWith("⏺");
 }
 
 function isAssistantTerminator(trimmedLine: string): boolean {
@@ -192,6 +216,17 @@ function isTerminalChromeLine(trimmedLine: string): boolean {
     trimmedLine.startsWith("╰") ||
     trimmedLine.startsWith("│") ||
     trimmedLine.startsWith("─");
+}
+
+function isTerminalChromeResponse(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return true;
+  if (trimmed.includes("Welcome back") && trimmed.includes("Claude Code")) return true;
+  if (/^Working \(\d+s/i.test(trimmed)) return true;
+  if (/^Select model\b/i.test(trimmed)) return true;
+  if (/^esc to interrupt$/i.test(trimmed)) return true;
+  if (/^Enter to confirm\b/i.test(trimmed)) return true;
+  return false;
 }
 
 function trimBlankLines(lines: string[]): string[] {

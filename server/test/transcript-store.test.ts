@@ -49,4 +49,26 @@ describe("TranscriptStore", () => {
     const latest = await store.list("demo-session");
     expect(latest.items.map((item) => item.text)).toEqual(["older prompt", "older response"]);
   });
+
+  it("repairs previously imported terminal chrome even when the cleaned history is shorter", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-transcripts-"));
+    const store = new TranscriptStore(root);
+
+    await store.append("demo-session", {
+      role: "user",
+      text: "try write a test for <filepath>",
+      source: "ccc_history"
+    });
+    await store.append("demo-session", {
+      role: "assistant",
+      text: "╭─── Claude Code v2.1.126 ─╮\n│ Welcome back Lilong! │\n❯ ",
+      source: "ccc_history"
+    });
+    await expect(store.replaceIfLonger("demo-session", [
+      { role: "user", text: "clean prompt", source: "ccc_history" }
+    ])).resolves.toBe(true);
+
+    const latest = await store.list("demo-session");
+    expect(latest.items.map((item) => item.text)).toEqual(["clean prompt"]);
+  });
 });

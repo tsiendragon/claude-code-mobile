@@ -72,7 +72,7 @@ export class TranscriptStore {
       .filter((input) => input.text.length > 0);
     if (normalized.length === 0) return false;
     const existing = await this.readAll(cccName);
-    if (normalized.length <= existing.length) return false;
+    if (normalized.length <= existing.length && !hasImportedTerminalChrome(existing)) return false;
 
     const messages = normalized.map((input, index): TranscriptMessage => {
       const seq = index + 1;
@@ -167,6 +167,20 @@ function clampLimit(limit: number | undefined): number {
 
 function normalizeText(text: string): string {
   return text.replace(/\r/g, "").replace(/\s+$/gm, "").trim();
+}
+
+function hasImportedTerminalChrome(messages: TranscriptMessage[]): boolean {
+  return messages.some((message) =>
+    (message.source === "ccc_history" || message.source === "ccc_read") &&
+    looksLikeTerminalChrome(message.text)
+  );
+}
+
+function looksLikeTerminalChrome(text: string): boolean {
+  return (text.includes("Welcome back") && text.includes("Claude Code")) ||
+    text.includes("Tips for getting started") ||
+    text.includes("❯ ") ||
+    /^Working \(\d+s/i.test(text.trim());
 }
 
 function isTranscriptMessage(input: unknown): input is TranscriptMessage {

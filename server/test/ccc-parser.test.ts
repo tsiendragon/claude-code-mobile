@@ -147,4 +147,46 @@ describe("ccc parser", () => {
       }
     ]);
   });
+
+  it("removes Claude Code welcome chrome from ccc history responses", () => {
+    const items = parseCccHistory([
+      JSON.stringify({
+        ts: 1773153517.928,
+        role: "user",
+        content: "hello",
+        event_type: "send"
+      }),
+      JSON.stringify({
+        ts: 1773153530.34,
+        role: "assistant",
+        content: [
+          "╭─── Claude Code v2.1.126 ─────────────────╮",
+          "│           Welcome back Lilong!           │",
+          "╰──────────────────────────────────────────╯",
+          "❯ hello",
+          "",
+          "⏺ Hello! How can I help?",
+          "",
+          "✻ Brewed for 1s"
+        ].join("\n"),
+        event_type: "response"
+      }),
+      JSON.stringify({
+        ts: 1773153531,
+        role: "assistant",
+        content: [
+          "╭─── Claude Code v2.1.126 ─────────────────╮",
+          "│           Welcome back Lilong!           │",
+          "╰──────────────────────────────────────────╯",
+          "❯ "
+        ].join("\n"),
+        event_type: "response"
+      })
+    ].join("\n"));
+
+    expect(items.map((item) => item.text)).toEqual([
+      "hello",
+      "Hello! How can I help?"
+    ]);
+  });
 });
