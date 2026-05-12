@@ -125,4 +125,31 @@ describe("protocol validators", () => {
       limit: 50
     }, 1000).ok).toBe(true);
   });
+
+  it("accepts chunked image uploads", () => {
+    expect(validateRequest({
+      type: "image.upload.begin",
+      id: "req_1",
+      session_id: "sess_abcdefgh",
+      name: "photo.png",
+      mime: "image/png",
+      bytes: 12
+    }, 1000).ok).toBe(true);
+
+    expect(validateRequest({
+      type: "image.upload.chunk",
+      id: "req_2",
+      session_id: "sess_abcdefgh",
+      upload_id: "upl_abcdefgh",
+      index: 0,
+      data: "aGVsbG8="
+    }, 1000).ok).toBe(true);
+
+    expect(validateRequest({
+      type: "image.upload.finish",
+      id: "req_3",
+      session_id: "sess_abcdefgh",
+      upload_id: "upl_abcdefgh"
+    }, 1000).ok).toBe(true);
+  });
 });

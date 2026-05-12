@@ -192,6 +192,28 @@ export class WsGateway {
             String(request.command)
           )));
           break;
+        case "image.upload.begin":
+          this.send(socket, ok(request.id, this.sessions.beginImageUpload(
+            String(request.session_id),
+            String(request.name),
+            String(request.mime),
+            Number(request.bytes)
+          )));
+          break;
+        case "image.upload.chunk":
+          this.send(socket, ok(request.id, this.sessions.appendImageUploadChunk(
+            String(request.session_id),
+            String(request.upload_id),
+            Number(request.index),
+            String(request.data)
+          )));
+          break;
+        case "image.upload.finish":
+          this.send(socket, ok(request.id, await this.sessions.finishImageUpload(
+            String(request.session_id),
+            String(request.upload_id)
+          )));
+          break;
         case "file.resolve":
           this.send(socket, ok(request.id, await this.sessions.resolveFiles(
             String(request.session_id),
@@ -251,6 +273,8 @@ function normalizeErrorCode(message: string): string {
     "RATE_LIMITED",
     "MESSAGE_TOO_LARGE",
     "PATH_NOT_ALLOWED",
+    "UPLOAD_INVALID",
+    "UPLOAD_NOT_FOUND",
     "WORKSPACE_INVALID",
     "SESSION_NAME_INVALID"
   ];

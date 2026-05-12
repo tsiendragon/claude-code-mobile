@@ -232,6 +232,36 @@ describe("SessionManager", () => {
     await expect(manager.readFile(session.sessionId, path.join(root, "outside.md"))).rejects.toThrow("PATH_NOT_ALLOWED");
   });
 
+  it("stores uploaded images inside the session cwd", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const workspaces = new WorkspaceService(cfg);
+    await workspaces.create("demo-app");
+    const ccc = {
+      runSession: async (name: string) => {
+        return { ok: true, stdout: "", stderr: "", data: { name } } as const;
+      }
+    } as unknown as CccClient;
+
+    const manager = new SessionManager(cfg, ccc, workspaces, new InMemoryEventStore(20));
+    const session = await manager.run({
+      name: "Demo",
+      workspaceId: "demo-app"
+    });
+    const image = Buffer.from("fake image");
+    const begin = manager.beginImageUpload(session.sessionId, "photo.png", "image/png", image.length);
+    manager.appendImageUploadChunk(session.sessionId, begin.upload_id, 0, image.toString("base64"));
+
+    await expect(manager.finishImageUpload(session.sessionId, begin.upload_id)).resolves.toMatchObject({
+      file: {
+        name: expect.stringMatching(/photo\.png$/),
+        relative_path: expect.stringContaining(".ccm-mobile/uploads/"),
+        language: "image",
+        bytes: image.length
+      }
+    });
+  });
+
   it("returns persisted transcript pages on attach and messages.list", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
     const cfg = config(root);

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -260,6 +261,48 @@ class BridgeClient extends ChangeNotifier {
       'client_msg_id': clientMessageId,
       'command': command,
     });
+  }
+
+  Future<FileReference> uploadImage({
+    required String sessionId,
+    required String name,
+    required String mime,
+    required Uint8List bytes,
+  }) async {
+    final begin = await request('image.upload.begin', {
+      'session_id': sessionId,
+      'name': name,
+      'mime': mime,
+      'bytes': bytes.length,
+    });
+    final uploadId = begin['upload_id'] as String? ?? '';
+    final chunkSize = begin['chunk_size'] as int? ?? 96 * 1024;
+    if (uploadId.isEmpty) {
+      throw const BridgeException('Bridge did not return an upload id.');
+    }
+
+    var index = 0;
+    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+      final end =
+          offset + chunkSize > bytes.length ? bytes.length : offset + chunkSize;
+      await request('image.upload.chunk', {
+        'session_id': sessionId,
+        'upload_id': uploadId,
+        'index': index,
+        'data': base64Encode(bytes.sublist(offset, end)),
+      });
+      index += 1;
+    }
+
+    final finished = await request('image.upload.finish', {
+      'session_id': sessionId,
+      'upload_id': uploadId,
+    });
+    final rawFile = finished['file'];
+    if (rawFile is Map) {
+      return FileReference.fromJson(Map<String, Object?>.from(rawFile));
+    }
+    throw const BridgeException('Bridge did not return the uploaded image.');
   }
 
   Future<void> approve({

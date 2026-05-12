@@ -15,6 +15,9 @@ const requestTypes = new Set([
   "message.approve",
   "message.interrupt",
   "command.send",
+  "image.upload.begin",
+  "image.upload.chunk",
+  "image.upload.finish",
   "file.resolve",
   "file.read",
   "events.sync"
@@ -74,6 +77,30 @@ export function validateRequest(input: unknown, maxPromptBytes: number): Validat
     if (typeof input.command !== "string" || input.command.length === 0) return invalid("command is required");
     if (Buffer.byteLength(input.command, "utf8") > maxPromptBytes) {
       return { ok: false, code: "MESSAGE_TOO_LARGE", message: "command exceeds max_prompt_bytes" };
+    }
+  }
+
+  if (input.type === "image.upload.begin") {
+    if (typeof input.name !== "string" || input.name.trim().length === 0) return invalid("image name is required");
+    if (input.name.length > 255 || input.name.includes("\0")) return invalid("image name is invalid");
+    if (typeof input.mime !== "string" || !isImageMime(input.mime)) return invalid("valid image mime is required");
+    if (!Number.isInteger(input.bytes) || Number(input.bytes) < 1 || Number(input.bytes) > 10 * 1024 * 1024) {
+      return invalid("image must be 1 byte to 10 MB");
+    }
+  }
+
+  if (input.type === "image.upload.chunk") {
+    if (typeof input.upload_id !== "string" || !/^upl_[a-zA-Z0-9_-]{8,}$/.test(input.upload_id)) {
+      return invalid("valid upload_id is required");
+    }
+    if (!Number.isInteger(input.index) || Number(input.index) < 0) return invalid("chunk index is required");
+    if (typeof input.data !== "string" || input.data.length === 0) return invalid("chunk data is required");
+    if (input.data.length > 180000 || !/^[a-zA-Z0-9+/]*={0,2}$/.test(input.data)) return invalid("chunk data is invalid");
+  }
+
+  if (input.type === "image.upload.finish") {
+    if (typeof input.upload_id !== "string" || !/^upl_[a-zA-Z0-9_-]{8,}$/.test(input.upload_id)) {
+      return invalid("valid upload_id is required");
     }
   }
 
@@ -140,6 +167,9 @@ function requiresSession(type: string): boolean {
     "message.approve",
     "message.interrupt",
     "command.send",
+    "image.upload.begin",
+    "image.upload.chunk",
+    "image.upload.finish",
     "file.resolve",
     "file.read",
     "events.sync"
@@ -156,4 +186,8 @@ function isClientMessageId(value: unknown): boolean {
 
 function isBackend(value: unknown): boolean {
   return value === "claude" || value === "codex" || value === "opencode" || value === "cursor";
+}
+
+function isImageMime(value: string): boolean {
+  return ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(value.toLowerCase());
 }

@@ -1,5 +1,5 @@
 import { randomBytes, createHash } from "node:crypto";
-import { open, realpath, stat } from "node:fs/promises";
+import { mkdir, open, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { BridgeConfig } from "../config.js";
 import type { CccClient } from "../ccc/ccc-client.js";
@@ -19,11 +19,21 @@ export type SessionRunInput = {
   workspaceId?: string;
 };
 
+type ImageUploadState = {
+  sessionId: string;
+  name: string;
+  mime: string;
+  expectedBytes: number;
+  receivedBytes: number;
+  chunks: Map<number, Buffer>;
+};
+
 export class SessionManager {
   private readonly sessions = new Map<string, SessionRecord>();
   private readonly cccToBridge = new Map<string, string>();
   private readonly approvalResults = new Map<string, unknown>();
   private readonly transcriptItems = new Map<string, CccTranscriptItem[]>();
+  private readonly imageUploads = new Map<string, ImageUploadState>();
   private poller?: { start(sessionId: string): void; stop(sessionId: string): void };
 
   constructor(
@@ -152,6 +162,62 @@ export class SessionManager {
       truncated: info.size > byteLength,
       content: buffer.toString("utf8")
     };
+  }
+
+  beginImageUpload(sessionId: string, name: string, mime: string, bytes: number) {
+    this.requireSession(sessionId);
+    const uploadId = `upl_${randomBytes(10).toString("base64url")}`;
+    this.imageUploads.set(uploadId, {
+      sessionId,
+      name: sanitizeUploadName(name),
+      mime: mime.toLowerCase(),
+      expectedBytes: bytes,
+      receivedBytes: 0,
+      chunks: new Map()
+    });
+    return { upload_id: uploadId, chunk_size: 96 * 1024 };
+  }
+
+  appendImageUploadChunk(sessionId: string, uploadId: string, index: number, data: string) {
+    const upload = this.requireImageUpload(sessionId, uploadId);
+    if (upload.chunks.has(index)) return { received: upload.receivedBytes };
+    const chunk = Buffer.from(data, "base64");
+    if (chunk.length === 0) throw new Error("UPLOAD_INVALID: empty image chunk");
+    upload.receivedBytes += chunk.length;
+    if (upload.receivedBytes > upload.expectedBytes) {
+      this.imageUploads.delete(uploadId);
+      throw new Error("UPLOAD_INVALID: image upload exceeds expected size");
+    }
+    upload.chunks.set(index, chunk);
+    return { received: upload.receivedBytes };
+  }
+
+  async finishImageUpload(sessionId: string, uploadId: string) {
+    const session = this.requireSession(sessionId);
+    const upload = this.requireImageUpload(sessionId, uploadId);
+    const buffers: Buffer[] = [];
+    let total = 0;
+    for (let index = 0; total < upload.expectedBytes; index += 1) {
+      const chunk = upload.chunks.get(index);
+      if (!chunk) throw new Error("UPLOAD_INVALID: image upload is missing chunks");
+      buffers.push(chunk);
+      total += chunk.length;
+    }
+    if (total !== upload.expectedBytes) throw new Error("UPLOAD_INVALID: image upload size mismatch");
+
+    const uploadDir = path.join(session.cwd, ".ccm-mobile", "uploads");
+    await mkdir(uploadDir, { recursive: true });
+    const realUploadDir = await realpath(uploadDir);
+    if (!isPathInside(realUploadDir, session.cwd)) {
+      throw new Error("PATH_NOT_ALLOWED: upload path is outside session cwd");
+    }
+
+    const storedName = buildStoredImageName(upload.name, upload.mime);
+    const filePath = path.join(realUploadDir, storedName);
+    await writeFile(filePath, Buffer.concat(buffers));
+    this.imageUploads.delete(uploadId);
+    const info = await stat(filePath);
+    return { file: fileMetadata(filePath, session.cwd, info.size) };
   }
 
   async kill(sessionId: string) {
@@ -445,6 +511,14 @@ export class SessionManager {
     }
   }
 
+  private requireImageUpload(sessionId: string, uploadId: string): ImageUploadState {
+    const upload = this.imageUploads.get(uploadId);
+    if (!upload || upload.sessionId !== sessionId) {
+      throw new Error("UPLOAD_NOT_FOUND: image upload not found");
+    }
+    return upload;
+  }
+
   private assertApprovalPathsInSession(session: SessionRecord, approval: ApprovalRecord) {
     for (const rawPath of approval.paths) {
       if (rawPath.trim().length === 0) continue;
@@ -478,6 +552,34 @@ function fileMetadata(filePath: string, cwd: string, bytes: number) {
     bytes,
     language: detectLanguage(filePath)
   };
+}
+
+function sanitizeUploadName(name: string): string {
+  const base = path.basename(name).replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "");
+  return base.slice(0, 80) || "image";
+}
+
+function buildStoredImageName(name: string, mime: string): string {
+  const ext = imageExtension(name, mime);
+  const base = path.basename(name, path.extname(name)).replace(/[^\w.-]+/g, "-").slice(0, 48) || "image";
+  return `${Date.now()}-${randomBytes(4).toString("hex")}-${base}${ext}`;
+}
+
+function imageExtension(name: string, mime: string): string {
+  const ext = path.extname(name).toLowerCase();
+  if ([".jpg", ".jpeg", ".png", ".gif", ".webp"].includes(ext)) return ext;
+  switch (mime.toLowerCase()) {
+    case "image/jpeg":
+      return ".jpg";
+    case "image/png":
+      return ".png";
+    case "image/gif":
+      return ".gif";
+    case "image/webp":
+      return ".webp";
+    default:
+      return ".img";
+  }
 }
 
 function normalizeSnapshot(output: string): string {
@@ -546,13 +648,16 @@ function detectLanguage(filePath: string): string {
     csv: "csv",
     dart: "dart",
     env: "dotenv",
+    gif: "image",
     go: "go",
     gradle: "gradle",
     h: "c",
     hpp: "cpp",
     html: "html",
     java: "java",
+    jpeg: "image",
     js: "javascript",
+    jpg: "image",
     json: "json",
     jsx: "jsx",
     kt: "kotlin",
@@ -563,6 +668,7 @@ function detectLanguage(filePath: string): string {
     md: "markdown",
     mjs: "javascript",
     php: "php",
+    png: "image",
     py: "python",
     r: "r",
     rb: "ruby",
@@ -575,6 +681,7 @@ function detectLanguage(filePath: string): string {
     ts: "typescript",
     tsx: "tsx",
     txt: "text",
+    webp: "image",
     xml: "xml",
     yaml: "yaml",
     yml: "yaml",

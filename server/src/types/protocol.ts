@@ -58,6 +58,25 @@ export type FileReadRequest = SessionIdRequest & {
   path: string;
 };
 
+export type ImageUploadBeginRequest = SessionIdRequest & {
+  type: "image.upload.begin";
+  name: string;
+  mime: string;
+  bytes: number;
+};
+
+export type ImageUploadChunkRequest = SessionIdRequest & {
+  type: "image.upload.chunk";
+  upload_id: string;
+  index: number;
+  data: string;
+};
+
+export type ImageUploadFinishRequest = SessionIdRequest & {
+  type: "image.upload.finish";
+  upload_id: string;
+};
+
 export type SupportedRequest =
   | AuthRequest
   | RequestEnvelope
@@ -66,6 +85,9 @@ export type SupportedRequest =
   | MessageSendRequest
   | MessageApproveRequest
   | MessagesListRequest
+  | ImageUploadBeginRequest
+  | ImageUploadChunkRequest
+  | ImageUploadFinishRequest
   | FileReadRequest
   | EventsSyncRequest;
 

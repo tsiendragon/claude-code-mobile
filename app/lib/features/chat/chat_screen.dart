@@ -11,6 +11,7 @@ import '../../protocol/models.dart';
 import '../approvals/approval_card.dart';
 
 const _linkChannel = MethodChannel('ccm_mobile/links');
+const _mediaChannel = MethodChannel('ccm_mobile/media');
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.session});
@@ -28,6 +29,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   SessionSummary? _session;
   List<ChatItem> _items = const [];
+  List<_PendingImageAttachment> _pendingImages = const [];
   final Set<String> _expandedMessageIds = <String>{};
   PendingApproval? _pendingApproval;
   bool _isLoading = true;
@@ -66,6 +68,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final session = _session ?? widget.session;
     final canSend = (_canSendText(session.state) || _pendingApproval != null) &&
         !_isSending;
+    final canAttachImages = session.state == SessionState.ready &&
+        _pendingApproval == null &&
+        !_isSending &&
+        _pendingImages.length < 4;
     final canInterrupt = session.state == SessionState.thinking ||
         session.state == SessionState.approval ||
         session.state == SessionState.choosing;
@@ -189,8 +195,21 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     const SizedBox(height: 6),
                   ],
+                  if (_pendingImages.isNotEmpty) ...[
+                    _PendingImageStrip(
+                      images: _pendingImages,
+                      onRemove: _removePendingImage,
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   Row(
                     children: [
+                      IconButton(
+                        tooltip: 'Attach image',
+                        icon: const Icon(Icons.add_photo_alternate_outlined),
+                        onPressed: canAttachImages ? _pickImage : null,
+                      ),
+                      const SizedBox(width: 4),
                       Expanded(
                         child: TextField(
                           controller: _messageController,
@@ -260,43 +279,61 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _send() async {
     final text = _messageController.text.trim();
-    if (text.isEmpty) return;
+    final attachments = List<_PendingImageAttachment>.from(_pendingImages);
+    if (text.isEmpty && attachments.isEmpty) return;
     final currentState = (_session ?? widget.session).state;
     final useCommand = _pendingApproval != null ||
         currentState == SessionState.approval ||
         currentState == SessionState.choosing;
+    if (useCommand && attachments.isNotEmpty) {
+      setState(() => _error = 'Images can only be attached to normal prompts.');
+      return;
+    }
 
     final clientMessageId =
         'cmsg_${DateTime.now().microsecondsSinceEpoch.toString()}';
     final optimistic = ChatItem(
       id: clientMessageId,
       role: ChatItemRole.user,
-      text: text,
+      text: _localPromptText(text, attachments),
       pending: true,
     );
 
     setState(() {
       _isSending = true;
       _items = [..._items, optimistic];
+      _pendingImages = const [];
       _messageController.clear();
     });
     _scrollToBottom();
 
     try {
+      final client = context.read<BridgeClient>();
+      final prompt = attachments.isEmpty
+          ? text
+          : await _uploadImagesAndBuildPrompt(text, attachments);
       if (useCommand) {
-        await context.read<BridgeClient>().sendCommand(
-              sessionId: widget.session.sessionId,
-              clientMessageId: clientMessageId,
-              command: text,
-            );
+        await client.sendCommand(
+          sessionId: widget.session.sessionId,
+          clientMessageId: clientMessageId,
+          command: prompt,
+        );
       } else {
-        await context.read<BridgeClient>().sendMessage(
-              sessionId: widget.session.sessionId,
-              clientMessageId: clientMessageId,
-              text: text,
-            );
+        await client.sendMessage(
+          sessionId: widget.session.sessionId,
+          clientMessageId: clientMessageId,
+          text: prompt,
+        );
       }
-      _replaceItem(clientMessageId, optimistic.copyWith(pending: false));
+      _replaceItem(
+        clientMessageId,
+        ChatItem(
+          id: clientMessageId,
+          role: ChatItemRole.user,
+          text: prompt,
+          pending: false,
+        ),
+      );
     } on BridgeException catch (error) {
       _replaceItem(
           clientMessageId,
@@ -304,7 +341,10 @@ class _ChatScreenState extends State<ChatScreen> {
             pending: false,
             failed: true,
           ));
-      setState(() => _error = error.message);
+      setState(() {
+        _error = error.message;
+        _pendingImages = attachments;
+      });
     } finally {
       if (mounted) {
         setState(() => _isSending = false);
@@ -351,6 +391,93 @@ class _ChatScreenState extends State<ChatScreen> {
     } on BridgeException catch (error) {
       setState(() => _error = error.message);
     }
+  }
+
+  Future<void> _pickImage() async {
+    try {
+      final raw = await _mediaChannel.invokeMethod<Object?>('pickImage');
+      if (!mounted || raw == null) return;
+      if (raw is! Map) {
+        setState(() => _error = 'Image picker returned an invalid result.');
+        return;
+      }
+      final result = Map<Object?, Object?>.from(raw);
+      final bytes = result['bytes'];
+      final name = result['name'] as String? ?? 'image';
+      final mime = result['mime'] as String? ?? 'image/jpeg';
+      if (bytes is! Uint8List || bytes.isEmpty) {
+        setState(() => _error = 'Selected image is empty.');
+        return;
+      }
+      if (bytes.length > 10 * 1024 * 1024) {
+        setState(() => _error = 'Images must be 10 MB or smaller.');
+        return;
+      }
+      setState(() {
+        _pendingImages = [
+          ..._pendingImages,
+          _PendingImageAttachment(name: name, mime: mime, bytes: bytes),
+        ];
+        _error = null;
+      });
+    } on PlatformException catch (error) {
+      setState(() => _error = error.message ?? 'Could not pick image.');
+    }
+  }
+
+  void _removePendingImage(_PendingImageAttachment image) {
+    setState(() {
+      _pendingImages = _pendingImages.where((item) => item != image).toList();
+    });
+  }
+
+  Future<String> _uploadImagesAndBuildPrompt(
+    String text,
+    List<_PendingImageAttachment> attachments,
+  ) async {
+    final client = context.read<BridgeClient>();
+    final uploaded = <FileReference>[];
+    for (final image in attachments) {
+      uploaded.add(await client.uploadImage(
+        sessionId: widget.session.sessionId,
+        name: image.name,
+        mime: image.mime,
+        bytes: image.bytes,
+      ));
+    }
+    final buffer = StringBuffer();
+    if (text.isNotEmpty) {
+      buffer.writeln(text);
+      buffer.writeln();
+    }
+    buffer.writeln('Attached image file${uploaded.length == 1 ? '' : 's'}:');
+    for (final image in uploaded) {
+      final displayPath = image.relativePath?.isNotEmpty == true
+          ? image.relativePath!
+          : image.path;
+      buffer.writeln('- ${image.name}: ${image.path} ($displayPath)');
+    }
+    buffer.writeln();
+    buffer.write(
+        'Please inspect the attached image file path(s) as part of this request.');
+    return buffer.toString();
+  }
+
+  String _localPromptText(
+    String text,
+    List<_PendingImageAttachment> attachments,
+  ) {
+    if (attachments.isEmpty) return text;
+    final buffer = StringBuffer();
+    if (text.isNotEmpty) {
+      buffer.writeln(text);
+      buffer.writeln();
+    }
+    buffer.writeln('Attached image${attachments.length == 1 ? '' : 's'}:');
+    for (final image in attachments) {
+      buffer.writeln('- ${image.name} (${_formatBytes(image.bytes.length)})');
+    }
+    return buffer.toString().trimRight();
   }
 
   void _handleEvent(BridgeEventEnvelope envelope) {
@@ -606,6 +733,90 @@ class _ChatScreenState extends State<ChatScreen> {
       default:
         return 'Send prompt';
     }
+  }
+}
+
+class _PendingImageAttachment {
+  const _PendingImageAttachment({
+    required this.name,
+    required this.mime,
+    required this.bytes,
+  });
+
+  final String name;
+  final String mime;
+  final Uint8List bytes;
+}
+
+class _PendingImageStrip extends StatelessWidget {
+  const _PendingImageStrip({
+    required this.images,
+    required this.onRemove,
+  });
+
+  final List<_PendingImageAttachment> images;
+  final ValueChanged<_PendingImageAttachment> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 72,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: images.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final image = images[index];
+          return Container(
+            width: 220,
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: Image.memory(
+                    image.bytes,
+                    width: 52,
+                    height: 52,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        image.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        _formatBytes(image.bytes.length),
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Remove image',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => onRemove(image),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 }
 
