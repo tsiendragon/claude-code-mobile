@@ -6,6 +6,7 @@ export type StartupInfo = {
   websocket_path: "/ws";
   app_url_hint: string;
   workspace_root: string;
+  data_dir: string;
   allowed_paths: string[];
   allow_manual_cwd: boolean;
   allow_hidden_cwd: boolean;
@@ -22,6 +23,7 @@ export function buildStartupInfo(config: BridgeConfig): StartupInfo {
     websocket_path: "/ws",
     app_url_hint: buildAppUrlHint(config.host, config.port),
     workspace_root: config.workspaceRoot,
+    data_dir: config.dataDir,
     allowed_paths: config.allowedPaths,
     allow_manual_cwd: config.allowManualCwd,
     allow_hidden_cwd: config.allowHiddenCwd,

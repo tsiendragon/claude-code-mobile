@@ -2,8 +2,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { BridgeConfig } from "../config.js";
 import type { SessionBackend } from "../types/domain.js";
-import { parseCccRead, parseCccSessionList } from "./ccc-parser.js";
-import type { CccCommandResult, CccReadResult, CccSession } from "./ccc-types.js";
+import { parseCccHistory, parseCccRead, parseCccSessionList } from "./ccc-parser.js";
+import type { CccCommandResult, CccReadResult, CccSession, CccTranscriptItem } from "./ccc-types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -44,6 +44,10 @@ export class CccClient {
 
   read(name: string): Promise<CccCommandResult<CccReadResult>> {
     return this.run(["read", name, "--json"], parseCccRead);
+  }
+
+  history(name: string): Promise<CccCommandResult<CccTranscriptItem[]>> {
+    return this.run(["history", name, "--json"], parseCccHistory);
   }
 
   buildCommand(args: string[]): { file: string; args: string[] } {

@@ -115,4 +115,14 @@ describe("protocol validators", () => {
       path: "report.md"
     }, 1000).ok).toBe(true);
   });
+
+  it("accepts paginated message history requests", () => {
+    expect(validateRequest({
+      type: "messages.list",
+      id: "req_1",
+      session_id: "sess_abcdefgh",
+      before: 42,
+      limit: 50
+    }, 1000).ok).toBe(true);
+  });
 });

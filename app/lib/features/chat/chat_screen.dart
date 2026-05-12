@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:provider/provider.dart';
@@ -30,10 +31,13 @@ class _ChatScreenState extends State<ChatScreen> {
   final Set<String> _expandedMessageIds = <String>{};
   PendingApproval? _pendingApproval;
   bool _isLoading = true;
+  bool _isLoadingHistory = false;
+  bool _hasMoreHistory = false;
   bool _isSending = false;
   bool _isApproving = false;
   bool _hasEventGap = false;
   bool _showJumpToBottom = false;
+  int? _historyBefore;
   String? _error;
 
   @override
@@ -122,10 +126,20 @@ class _ChatScreenState extends State<ChatScreen> {
                               ScrollViewKeyboardDismissBehavior.onDrag,
                           padding: const EdgeInsets.fromLTRB(16, 16, 16, 72),
                           itemCount: _items.length +
+                              (_showHistoryHeader ? 1 : 0) +
                               (_pendingApproval == null ? 0 : 1),
                           itemBuilder: (context, index) {
-                            if (index < _items.length) {
-                              final item = _items[index];
+                            if (_showHistoryHeader && index == 0) {
+                              return _HistoryLoader(
+                                isLoading: _isLoadingHistory,
+                                onPressed: _loadEarlierMessages,
+                              );
+                            }
+
+                            final itemIndex =
+                                index - (_showHistoryHeader ? 1 : 0);
+                            if (itemIndex < _items.length) {
+                              final item = _items[itemIndex];
                               return _ChatBubble(
                                 key: ValueKey(item.id),
                                 sessionId: widget.session.sessionId,
@@ -226,6 +240,8 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _session = snapshot.session;
         _items = snapshot.items;
+        _hasMoreHistory = snapshot.hasMoreHistory;
+        _historyBefore = snapshot.nextHistoryBefore;
         _expandedMessageIds
             .removeWhere((id) => !_items.any((item) => item.id == id));
         _pendingApproval = snapshot.pendingApproval;
@@ -469,8 +485,71 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _handleScroll() {
+    if (_scrollController.hasClients &&
+        _scrollController.position.pixels < 160 &&
+        _scrollController.position.userScrollDirection ==
+            ScrollDirection.forward &&
+        _hasMoreHistory &&
+        !_isLoadingHistory) {
+      unawaited(_loadEarlierMessages());
+    }
     if (!_showJumpToBottom || !_isNearBottom()) return;
     setState(() => _showJumpToBottom = false);
+  }
+
+  bool get _showHistoryHeader => _hasMoreHistory || _isLoadingHistory;
+
+  Future<void> _loadEarlierMessages() async {
+    if (_isLoadingHistory || !_hasMoreHistory) return;
+    final before = _historyBefore;
+    if (before == null) {
+      setState(() => _hasMoreHistory = false);
+      return;
+    }
+
+    final oldMaxExtent = _scrollController.hasClients
+        ? _scrollController.position.maxScrollExtent
+        : 0.0;
+    final oldPixels =
+        _scrollController.hasClients ? _scrollController.position.pixels : 0.0;
+
+    setState(() {
+      _isLoadingHistory = true;
+      _error = null;
+    });
+
+    try {
+      final page = await context.read<BridgeClient>().listMessages(
+            sessionId: widget.session.sessionId,
+            before: before,
+            limit: 50,
+          );
+      if (!mounted) return;
+      final existingIds = _items.map((item) => item.id).toSet();
+      final older = page.items
+          .where((item) => item.id.isEmpty || !existingIds.contains(item.id))
+          .toList();
+      setState(() {
+        _items = [...older, ..._items];
+        _hasMoreHistory = page.hasMore;
+        _historyBefore = page.nextBefore;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scrollController.hasClients) return;
+        final delta = _scrollController.position.maxScrollExtent - oldMaxExtent;
+        final target = (oldPixels + delta)
+            .clamp(
+              _scrollController.position.minScrollExtent,
+              _scrollController.position.maxScrollExtent,
+            )
+            .toDouble();
+        _scrollController.jumpTo(target);
+      });
+    } on BridgeException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _isLoadingHistory = false);
+    }
   }
 
   bool _isNearBottom() {
@@ -518,6 +597,36 @@ class _ChatScreenState extends State<ChatScreen> {
       default:
         return 'Send prompt';
     }
+  }
+}
+
+class _HistoryLoader extends StatelessWidget {
+  const _HistoryLoader({
+    required this.isLoading,
+    required this.onPressed,
+  });
+
+  final bool isLoading;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: TextButton.icon(
+          icon: isLoading
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.history),
+          label: Text(
+              isLoading ? 'Loading earlier messages' : 'Load earlier messages'),
+          onPressed: isLoading ? null : onPressed,
+        ),
+      ),
+    );
   }
 }
 

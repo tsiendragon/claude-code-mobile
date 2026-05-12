@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
-const envKeys = ["CCM_TEST_TOKEN", "CCM_TOKEN", "CCM_WORKSPACE_ROOT", "CCM_HOST", "CCM_PORT"];
+const envKeys = ["CCM_TEST_TOKEN", "CCM_TOKEN", "CCM_WORKSPACE_ROOT", "CCM_DATA_DIR", "CCM_HOST", "CCM_PORT"];
 const originalEnv = new Map(envKeys.map((key) => [key, process.env[key]]));
 
 afterEach(() => {

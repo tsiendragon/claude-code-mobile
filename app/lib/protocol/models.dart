@@ -364,6 +364,8 @@ class ChatStateSnapshot {
     this.pendingApproval,
     this.latestOutputSnapshot,
     this.hasEventGap = false,
+    this.hasMoreHistory = false,
+    this.nextHistoryBefore,
   });
 
   final SessionSummary session;
@@ -372,12 +374,15 @@ class ChatStateSnapshot {
   final PendingApproval? pendingApproval;
   final String? latestOutputSnapshot;
   final bool hasEventGap;
+  final bool hasMoreHistory;
+  final int? nextHistoryBefore;
 
   factory ChatStateSnapshot.fromAttachResponse(Map<String, Object?> json) {
     final rawSession = json['session'];
     final rawItems = json['items'] ?? json['messages'];
     final rawEvents = json['recent_events'] ?? json['recentEvents'];
     final rawApproval = json['pending_approval'] ?? json['pendingApproval'];
+    final rawHistory = json['history'];
 
     final session = SessionSummary.fromJson(
       rawSession is Map
@@ -433,6 +438,13 @@ class ChatStateSnapshot {
       hasEventGap: json['has_event_gap'] as bool? ??
           json['hasEventGap'] as bool? ??
           false,
+      hasMoreHistory: _historyBool(rawHistory, 'has_more', 'hasMore') ??
+          (json['has_more_history'] as bool?) ??
+          (json['hasMoreHistory'] as bool?) ??
+          false,
+      nextHistoryBefore: _historyInt(rawHistory, 'next_before', 'nextBefore') ??
+          (json['next_history_before'] as int?) ??
+          (json['nextHistoryBefore'] as int?),
     );
   }
 
@@ -442,6 +454,46 @@ class ChatStateSnapshot {
       return BridgeEventEnvelope.fromJson(Map<String, Object?>.from(event));
     }).toList();
   }
+}
+
+class ChatHistoryPage {
+  const ChatHistoryPage({
+    required this.items,
+    required this.hasMore,
+    this.nextBefore,
+  });
+
+  final List<ChatItem> items;
+  final bool hasMore;
+  final int? nextBefore;
+
+  factory ChatHistoryPage.fromJson(Map<String, Object?> json) {
+    final rawItems = json['items'];
+    final items = rawItems is List
+        ? rawItems
+            .whereType<Map>()
+            .map((item) => ChatItem.fromJson(Map<String, Object?>.from(item)))
+            .where((item) => item.text.isNotEmpty)
+            .toList()
+        : const <ChatItem>[];
+    return ChatHistoryPage(
+      items: items,
+      hasMore: json['has_more'] as bool? ?? json['hasMore'] as bool? ?? false,
+      nextBefore: json['next_before'] as int? ?? json['nextBefore'] as int?,
+    );
+  }
+}
+
+bool? _historyBool(Object? raw, String snakeKey, String camelKey) {
+  if (raw is! Map) return null;
+  final json = Map<String, Object?>.from(raw);
+  return json[snakeKey] as bool? ?? json[camelKey] as bool?;
+}
+
+int? _historyInt(Object? raw, String snakeKey, String camelKey) {
+  if (raw is! Map) return null;
+  final json = Map<String, Object?>.from(raw);
+  return json[snakeKey] as int? ?? json[camelKey] as int?;
 }
 
 enum ChatItemRole { user, assistant, system }
@@ -489,12 +541,14 @@ class ChatItem {
     );
     final rawText = json['text'] as String? ?? json['content'] as String? ?? '';
     return ChatItem(
-      id: json['id'] as String? ?? json['message_id'] as String? ?? '',
+      id: json['id'] as String? ??
+          json['message_id'] as String? ??
+          _messageSeqId(json),
       role: role,
       text: role == ChatItemRole.assistant
           ? formatAssistantText(rawText)
           : rawText,
-      seq: json['seq'] as int?,
+      seq: json['seq'] as int? ?? json['message_seq'] as int?,
       snapshot: json['snapshot'] as bool? ?? false,
     );
   }
@@ -574,6 +628,11 @@ String _cleanTerminalLine(String input) {
       .replaceAll('\u00a0', ' ')
       .replaceAll(RegExp('[↓↑]'), ' ')
       .trimRight();
+}
+
+String _messageSeqId(Map<String, Object?> json) {
+  final seq = json['message_seq'] as int? ?? json['messageSeq'] as int?;
+  return seq == null ? '' : 'msg_$seq';
 }
 
 String _stripAssistantMarker(String input) {

@@ -3,6 +3,7 @@
   "port": 8900,
   "token_env": "CCM_TOKEN",
   "workspace_root": "~/workspace",
+  "data_dir": "~/.ccm-bridge",
   "allowed_paths": ["~/workspace"],
   "allow_manual_cwd": true,
   "ccc_bin": "ccc",

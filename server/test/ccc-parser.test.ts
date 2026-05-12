@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCccRead, parseCccSessionList } from "../src/ccc/ccc-parser.js";
+import { parseCccHistory, parseCccRead, parseCccSessionList } from "../src/ccc/ccc-parser.js";
 
 describe("ccc parser", () => {
   it("preserves ccc alive status from ps output", () => {
@@ -106,5 +106,45 @@ describe("ccc parser", () => {
       }
     ]);
     expect(read.output).toBe("I don't have access to real-time weather data or your location.");
+  });
+
+  it("parses ccc history json lines", () => {
+    const items = parseCccHistory([
+      JSON.stringify({
+        ts: 1773153517.928,
+        role: "user",
+        content: "write report.md",
+        event_type: "send"
+      }),
+      JSON.stringify({
+        ts: 1773153530.34,
+        role: "assistant",
+        content: "● Done\n✻ Brewed for 1s",
+        event_type: "response"
+      }),
+      JSON.stringify({
+        ts: 1773153531,
+        role: "user",
+        content: "ENTER",
+        event_type: "send"
+      })
+    ].join("\n"));
+
+    expect(items).toEqual([
+      {
+        id: "hist_1",
+        role: "user",
+        text: "write report.md",
+        createdAt: "2026-03-10T14:38:37.928Z",
+        snapshot: false
+      },
+      {
+        id: "hist_2",
+        role: "assistant",
+        text: "Done",
+        createdAt: "2026-03-10T14:38:50.340Z",
+        snapshot: true
+      }
+    ]);
   });
 });

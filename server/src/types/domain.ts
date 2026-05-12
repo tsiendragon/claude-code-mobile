@@ -56,7 +56,7 @@ export type DomainEvent =
   | { kind: "user_message"; clientMsgId: string; text: string; textBytes: number }
   | { kind: "message_delivered"; clientMsgId: string }
   | { kind: "message_failed"; clientMsgId: string; code: string; message: string }
-  | { kind: "assistant_message"; text: string; snapshot?: boolean }
+  | { kind: "assistant_message"; messageId?: string; text: string; snapshot?: boolean }
   | { kind: "approval_requested"; approval: ApprovalRecord }
   | { kind: "approval_resolved"; approvalId: string; status: ApprovalRecord["status"] }
   | { kind: "session_ended" };

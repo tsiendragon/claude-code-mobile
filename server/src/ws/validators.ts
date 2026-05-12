@@ -9,6 +9,7 @@ const requestTypes = new Set([
   "session.list",
   "session.run",
   "session.attach",
+  "messages.list",
   "session.kill",
   "message.send",
   "message.approve",
@@ -110,6 +111,15 @@ export function validateRequest(input: unknown, maxPromptBytes: number): Validat
     }
   }
 
+  if (input.type === "messages.list") {
+    if (input.before !== undefined && (!Number.isInteger(input.before) || Number(input.before) < 1)) {
+      return invalid("before must be a positive integer");
+    }
+    if (input.limit !== undefined && (!Number.isInteger(input.limit) || Number(input.limit) < 1 || Number(input.limit) > 200)) {
+      return invalid("limit must be an integer from 1 to 200");
+    }
+  }
+
   return { ok: true, request: input as RequestEnvelope };
 }
 
@@ -124,6 +134,7 @@ function isObject(input: unknown): input is Record<string, unknown> {
 function requiresSession(type: string): boolean {
   return [
     "session.attach",
+    "messages.list",
     "session.kill",
     "message.send",
     "message.approve",

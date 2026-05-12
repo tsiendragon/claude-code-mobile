@@ -36,6 +36,37 @@ export function parseCccRead(stdout: string): CccReadResult {
   };
 }
 
+export function parseCccHistory(stdout: string): CccTranscriptItem[] {
+  const items: CccTranscriptItem[] = [];
+  for (const line of stdout.split("\n")) {
+    if (line.trim().length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object") continue;
+    const record = parsed as Record<string, unknown>;
+    const role = normalizeTranscriptRole(record.role);
+    const content = typeof record.content === "string" ? record.content.trim() : "";
+    if (!role || content.length === 0) continue;
+    if (role === "user" && isControlKeyHistoryEntry(content)) continue;
+    items.push({
+      id: `hist_${items.length + 1}`,
+      role,
+      text: role === "assistant" ? cleanAssistantResponseText(content) : content,
+      createdAt: timestampToIso(record.ts),
+      snapshot: record.event_type === "response"
+    });
+  }
+  return items;
+}
+
+function isControlKeyHistoryEntry(content: string): boolean {
+  return ["ENTER", "ESCAPE", "C-C", "CTRL-C"].includes(content.toUpperCase());
+}
+
 function parseReadOutput(parsed: Record<string, unknown>): string | undefined {
   if (typeof parsed.output === "string" && parsed.output.length > 0) return cleanAssistantResponseText(parsed.output);
   if (typeof parsed.lastResponse === "string" && parsed.lastResponse.length > 0) {
@@ -50,6 +81,16 @@ function parseReadOutput(parsed: Record<string, unknown>): string | undefined {
 function parseReadItems(input: unknown): CccTranscriptItem[] {
   if (!Array.isArray(input)) return [];
   return parseTranscriptLines(input.filter((item): item is string => typeof item === "string"));
+}
+
+function normalizeTranscriptRole(input: unknown): CccTranscriptItem["role"] | undefined {
+  return input === "user" || input === "assistant" ? input : undefined;
+}
+
+function timestampToIso(input: unknown): string | undefined {
+  if (typeof input !== "number" || !Number.isFinite(input)) return undefined;
+  const millis = input > 10_000_000_000 ? input : input * 1000;
+  return new Date(millis).toISOString();
 }
 
 function parseTranscriptLines(lines: string[]): CccTranscriptItem[] {

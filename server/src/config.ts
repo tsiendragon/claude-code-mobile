@@ -12,6 +12,7 @@ export type BridgeConfig = {
   token: string;
   allowedPaths: string[];
   workspaceRoot: string;
+  dataDir: string;
   allowManualCwd: boolean;
   cccBin: string;
   pollIntervalMs: number;
@@ -32,6 +33,7 @@ type RawConfig = {
   token_env?: string;
   allowed_paths?: string[];
   workspace_root?: string;
+  data_dir?: string;
   allow_manual_cwd?: boolean;
   ccc_bin?: string;
   poll_interval_ms?: number;
@@ -54,6 +56,7 @@ export async function loadConfig(configPath?: string): Promise<BridgeConfig> {
   const tokenSource = configuredToken ? "config" : envToken ? "env" : "generated";
   const workspaceRoot = expandHome(raw.workspace_root ?? process.env.CCM_WORKSPACE_ROOT ?? "~/workspace");
   const allowedPaths = (raw.allowed_paths ?? [workspaceRoot]).map(expandHome);
+  const dataDir = expandHome(raw.data_dir ?? process.env.CCM_DATA_DIR ?? "~/.ccm-bridge");
 
   const config: BridgeConfig = {
     host: raw.host ?? process.env.CCM_HOST ?? "127.0.0.1",
@@ -63,6 +66,7 @@ export async function loadConfig(configPath?: string): Promise<BridgeConfig> {
     token,
     allowedPaths,
     workspaceRoot,
+    dataDir,
     allowManualCwd: raw.allow_manual_cwd ?? true,
     cccBin: raw.ccc_bin ?? process.env.CCM_CCC_BIN ?? "ccc",
     pollIntervalMs: raw.poll_interval_ms ?? 1000,
@@ -95,6 +99,12 @@ function validateConfig(config: BridgeConfig) {
   }
   if (config.workspaceRoot === "/") {
     throw new Error("workspace_root must not be /");
+  }
+  if (!path.isAbsolute(config.dataDir)) {
+    throw new Error("data_dir must be absolute or start with ~");
+  }
+  if (config.dataDir === "/") {
+    throw new Error("data_dir must not be /");
   }
   for (const allowedPath of config.allowedPaths) {
     if (!path.isAbsolute(allowedPath)) {

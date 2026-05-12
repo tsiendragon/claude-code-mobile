@@ -157,6 +157,13 @@ export class WsGateway {
         case "session.attach":
           this.send(socket, ok(request.id, await this.sessions.attach(String(request.session_id))));
           break;
+        case "messages.list":
+          this.send(socket, ok(request.id, await this.sessions.messages(
+            String(request.session_id),
+            Number.isInteger(request.before) ? Number(request.before) : undefined,
+            Number.isInteger(request.limit) ? Number(request.limit) : undefined
+          )));
+          break;
         case "session.kill":
           this.send(socket, ok(request.id, await this.sessions.kill(String(request.session_id))));
           break;

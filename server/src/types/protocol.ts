@@ -47,6 +47,12 @@ export type EventsSyncRequest = SessionIdRequest & {
   after_seq?: number;
 };
 
+export type MessagesListRequest = SessionIdRequest & {
+  type: "messages.list";
+  before?: number;
+  limit?: number;
+};
+
 export type FileReadRequest = SessionIdRequest & {
   type: "file.read";
   path: string;
@@ -59,6 +65,7 @@ export type SupportedRequest =
   | SessionIdRequest
   | MessageSendRequest
   | MessageApproveRequest
+  | MessagesListRequest
   | FileReadRequest
   | EventsSyncRequest;
 

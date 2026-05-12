@@ -139,6 +139,59 @@ void main() {
     expect(snapshot.latestOutputSnapshot, isNull);
   });
 
+  test('builds chat snapshot from persisted messages with history cursor', () {
+    final snapshot = ChatStateSnapshot.fromAttachResponse({
+      'session': {
+        'session_id': 'sess_abcdefgh',
+        'name': 'Demo',
+        'backend': 'claude',
+        'state': 'ready',
+        'last_seq': 2,
+      },
+      'last_seq': 2,
+      'history': {
+        'has_more': true,
+        'next_before': 11,
+      },
+      'items': [
+        {
+          'id': 'msg_11',
+          'message_seq': 11,
+          'role': 'user',
+          'text': 'hello',
+        },
+        {
+          'id': 'msg_12',
+          'message_seq': 12,
+          'role': 'assistant',
+          'text': 'world',
+        },
+      ],
+    });
+
+    expect(snapshot.items.map((item) => item.id), ['msg_11', 'msg_12']);
+    expect(snapshot.items.first.seq, 11);
+    expect(snapshot.hasMoreHistory, isTrue);
+    expect(snapshot.nextHistoryBefore, 11);
+  });
+
+  test('parses paginated chat history pages', () {
+    final page = ChatHistoryPage.fromJson({
+      'has_more': false,
+      'items': [
+        {
+          'message_seq': 1,
+          'role': 'assistant',
+          'text': 'older',
+        },
+      ],
+    });
+
+    expect(page.hasMore, isFalse);
+    expect(page.items.single.id, 'msg_1');
+    expect(page.items.single.seq, 1);
+  });
+
   test('formats Claude terminal assistant output for chat bubbles', () {
     final item = ChatItem.fromAssistantEvent(
       const BridgeEventEnvelope(

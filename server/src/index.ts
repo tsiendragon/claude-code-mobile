@@ -7,6 +7,7 @@ import { WsGateway } from "./ws/gateway.js";
 import { InMemoryEventStore } from "./sessions/event-store.js";
 import { SessionManager } from "./sessions/session-manager.js";
 import { StatePoller } from "./sessions/state-poller.js";
+import { TranscriptStore } from "./sessions/transcript-store.js";
 import { WorkspaceService } from "./workspaces/workspace-service.js";
 import { buildStartupInfo } from "./startup-info.js";
 
@@ -26,9 +27,10 @@ const httpServer = http.createServer((_request, response) => {
 });
 
 const events = new InMemoryEventStore(config.eventBufferSize);
+const transcripts = new TranscriptStore(config.dataDir);
 const ccc = new CccClient(config);
 const workspaces = new WorkspaceService(config);
-const sessions = new SessionManager(config, ccc, workspaces, events);
+const sessions = new SessionManager(config, ccc, workspaces, events, transcripts);
 const poller = new StatePoller(sessions, logger, config.pollIntervalMs);
 sessions.setPoller(poller);
 const auth = new AuthService(config);

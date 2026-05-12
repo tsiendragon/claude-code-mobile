@@ -180,6 +180,19 @@ class BridgeClient extends ChangeNotifier {
     return snapshot;
   }
 
+  Future<ChatHistoryPage> listMessages({
+    required String sessionId,
+    int? before,
+    int limit = 50,
+  }) async {
+    final data = await request('messages.list', {
+      'session_id': sessionId,
+      if (before != null) 'before': before,
+      'limit': limit,
+    });
+    return ChatHistoryPage.fromJson(data);
+  }
+
   Future<void> syncEvents(String sessionId, int afterSeq) async {
     final data = await request('events.sync', {
       'session_id': sessionId,

@@ -11,6 +11,7 @@ function config(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
     token: "x".repeat(32),
     allowedPaths: ["/home/user/workspace"],
     workspaceRoot: "/home/user/workspace",
+    dataDir: "/home/user/.ccm-bridge",
     allowManualCwd: true,
     cccBin: "ccc",
     pollIntervalMs: 1000,
@@ -33,6 +34,7 @@ describe("startup info", () => {
     expect(info).toMatchObject({
       app_url_hint: "ws://127.0.0.1:8900/ws",
       workspace_root: "/home/user/workspace",
+      data_dir: "/home/user/.ccm-bridge",
       allowed_paths: ["/home/user/workspace"],
       token_source: "env",
       token_env: "CCM_TOKEN"

@@ -10,6 +10,7 @@ import type { SessionSummary } from "../types/protocol.js";
 import type { WorkspaceService } from "../workspaces/workspace-service.js";
 import { InMemoryEventStore } from "./event-store.js";
 import { canPerform, transitionState } from "./state-machine.js";
+import { TranscriptStore, type TranscriptInput } from "./transcript-store.js";
 
 export type SessionRunInput = {
   name: string;
@@ -29,7 +30,8 @@ export class SessionManager {
     private readonly config: BridgeConfig,
     private readonly ccc: CccClient,
     private readonly workspaces: WorkspaceService,
-    private readonly events: InMemoryEventStore
+    private readonly events: InMemoryEventStore,
+    private readonly transcripts: TranscriptStore = new TranscriptStore(config.dataDir)
   ) {}
 
   setPoller(poller: { start(sessionId: string): void; stop(sessionId: string): void }) {
@@ -76,17 +78,28 @@ export class SessionManager {
   }
 
   async attach(sessionId: string) {
+    const initialSession = this.requireSession(sessionId);
+    await this.refreshTranscriptFromHistory(initialSession);
     await this.applySnapshot(sessionId);
     const session = this.requireSession(sessionId);
     const recent = this.events.listAfter(sessionId, Math.max(0, session.lastSeq - this.config.eventBufferSize));
-    const items = this.transcriptItems.get(sessionId);
+    const transcriptPage = await this.transcripts.list(session.cccName, { limit: 50 });
     return {
       session,
       last_seq: session.lastSeq,
-      ...(items && items.length > 0 ? { items } : {}),
+      items: transcriptPage.items,
+      history: {
+        has_more: transcriptPage.has_more,
+        next_before: transcriptPage.next_before
+      },
       recent_events: Array.isArray(recent) ? recent : [],
       pending_approval: session.pendingApproval
     };
+  }
+
+  async messages(sessionId: string, before?: number, limit?: number) {
+    const session = this.requireSession(sessionId);
+    return this.transcripts.list(session.cccName, { before, limit });
   }
 
   syncEvents(sessionId: string, afterSeq: number) {
@@ -154,6 +167,7 @@ export class SessionManager {
     if (!canPerform(session.state, "message.send", session.capabilities)) {
       throw new Error("SESSION_STATE_INVALID");
     }
+    await this.persistUserTranscript(session, text);
     this.append(session, { kind: "user_message", clientMsgId, text, textBytes: Buffer.byteLength(text) });
     const result = await this.ccc.sendMessage(session.cccName, text);
     if (result.ok) {
@@ -198,6 +212,7 @@ export class SessionManager {
     if (!canPerform(session.state, "command.send", session.capabilities)) {
       throw new Error("SESSION_STATE_INVALID");
     }
+    await this.persistUserTranscript(session, command);
     this.append(session, { kind: "user_message", clientMsgId, text: command, textBytes: Buffer.byteLength(command) });
     const inputResult = await this.ccc.input(session.cccName, command);
     const result = inputResult.ok ? await this.ccc.key(session.cccName, "Enter") : inputResult;
@@ -240,12 +255,26 @@ export class SessionManager {
     this.updateState(session, result.data.state);
     if (result.data.items && result.data.items.length > 0) {
       this.transcriptItems.set(sessionId, result.data.items);
+      await this.transcripts.replaceIfLonger(session.cccName, transcriptInputs(result.data.items, "ccc_read"));
     }
     if (result.data.output) {
       const hash = createHash("sha256").update(normalizeSnapshot(result.data.output)).digest("hex");
       if (hash !== session.lastSnapshotHash) {
         session.lastSnapshotHash = hash;
-        this.append(session, { kind: "assistant_message", text: result.data.output, snapshot: true });
+        const persisted = await this.transcripts.appendIfNewTail(session.cccName, {
+          role: "assistant",
+          text: result.data.output,
+          snapshot: true,
+          source: "event"
+        });
+        if (persisted.created) {
+          this.append(session, {
+            kind: "assistant_message",
+            messageId: persisted.message.id,
+            text: result.data.output,
+            snapshot: true
+          });
+        }
       }
     }
     if (result.data.pendingApproval) {
@@ -320,6 +349,26 @@ export class SessionManager {
     session.lastSeq = stored.seq;
     session.updatedAt = stored.created_at;
     return stored;
+  }
+
+  private async persistUserTranscript(session: SessionRecord, text: string) {
+    if (text.trim().length === 0) return;
+    await this.transcripts.append(session.cccName, {
+      role: "user",
+      text,
+      source: "event"
+    });
+  }
+
+  private async refreshTranscriptFromHistory(session: SessionRecord) {
+    try {
+      const result = await this.ccc.history(session.cccName);
+      if (result.ok && result.data.length > 0) {
+        await this.transcripts.replaceIfLonger(session.cccName, transcriptInputs(result.data, "ccc_history"));
+      }
+    } catch {
+      // Older ccc builds may not expose history; ccc read still provides a tail fallback.
+    }
   }
 
   private async resolveManualCwd(cwd: string | undefined): Promise<string> {
@@ -399,6 +448,16 @@ function fileMetadata(filePath: string, cwd: string, bytes: number) {
 
 function normalizeSnapshot(output: string): string {
   return output.replace(/\r/g, "").replace(/\d{1,2}:\d{2}:\d{2}/g, "<time>");
+}
+
+function transcriptInputs(items: CccTranscriptItem[], source: TranscriptInput["source"]): TranscriptInput[] {
+  return items.map((item) => ({
+    role: item.role,
+    text: item.text,
+    created_at: item.createdAt,
+    snapshot: item.snapshot,
+    source
+  }));
 }
 
 function createApproval(
