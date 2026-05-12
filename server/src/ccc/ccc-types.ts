@@ -1,4 +1,4 @@
-import type { ApprovalRecord, SessionBackend, SessionState } from "../types/domain.js";
+import type { ApprovalChoice, ApprovalRecord, SessionBackend, SessionState } from "../types/domain.js";
 
 export type CccSession = {
   name: string;
@@ -20,7 +20,9 @@ export type CccReadResult = {
   state: SessionState;
   output?: string;
   items?: CccTranscriptItem[];
-  pendingApproval?: Omit<ApprovalRecord, "approvalId" | "sessionId" | "expiresAt" | "status">;
+  pendingApproval?: Omit<ApprovalRecord, "approvalId" | "sessionId" | "expiresAt" | "status"> & {
+    choices?: ApprovalChoice[];
+  };
 };
 
 export type CccCommandResult<T> =

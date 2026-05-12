@@ -89,6 +89,51 @@ describe("SessionManager", () => {
     expect(cccCalls[0].cwd).toBe(path.join(realRoot, "demo-app"));
   });
 
+  it("returns a session when ccc reports startup failure after creating tmux session", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const workspaces = new WorkspaceService(cfg);
+    await workspaces.create("demo-app");
+    let cccName = "";
+    const ccc = {
+      runSession: async (name: string) => {
+        cccName = name;
+        return {
+          ok: false,
+          stdout: "",
+          stderr: "startup prompt",
+          code: "CCC_COMMAND_FAILED",
+          message: "startup prompt"
+        } as const;
+      },
+      listSessions: async () => ({
+        ok: true,
+        stdout: "",
+        stderr: "",
+        data: [
+          {
+            name: cccName,
+            cwd: path.join(root, "demo-app"),
+            backend: "codex",
+            alive: true,
+            state: "choosing"
+          }
+        ]
+      })
+    } as unknown as CccClient;
+
+    const manager = new SessionManager(cfg, ccc, workspaces, new InMemoryEventStore(20));
+    const session = await manager.run({
+      name: "Codex prompt",
+      backend: "codex",
+      workspaceId: "demo-app"
+    });
+
+    expect(session.name).toBe("Codex prompt");
+    expect(session.backend).toBe("codex");
+    expect(session.state).toBe("choosing");
+  });
+
   it("falls back to a generic ccc name when the display name has no ascii slug", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
     const cfg = config(root);

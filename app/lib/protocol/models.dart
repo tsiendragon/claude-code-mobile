@@ -806,6 +806,7 @@ class PendingApproval {
     required this.paths,
     required this.actions,
     required this.expiresAt,
+    this.choices = const <ApprovalChoice>[],
     this.diffSummary,
     this.contentHash,
     this.status = 'pending',
@@ -817,6 +818,7 @@ class PendingApproval {
   final String description;
   final List<String> paths;
   final List<String> actions;
+  final List<ApprovalChoice> choices;
   final DateTime expiresAt;
   final String? diffSummary;
   final String? contentHash;
@@ -836,6 +838,13 @@ class PendingApproval {
           const <String>[],
       actions: (json['actions'] as List?)?.whereType<String>().toList() ??
           const <String>[],
+      choices: (json['choices'] as List?)
+              ?.whereType<Map>()
+              .map((choice) =>
+                  ApprovalChoice.fromJson(Map<String, Object?>.from(choice)))
+              .where((choice) => choice.value.isNotEmpty)
+              .toList() ??
+          const <ApprovalChoice>[],
       expiresAt: DateTime.tryParse(json['expires_at'] as String? ?? '') ??
           DateTime.now().toUtc(),
       diffSummary:
@@ -843,6 +852,23 @@ class PendingApproval {
       contentHash:
           json['content_hash'] as String? ?? json['contentHash'] as String?,
       status: json['status'] as String? ?? 'pending',
+    );
+  }
+}
+
+class ApprovalChoice {
+  const ApprovalChoice({
+    required this.value,
+    required this.label,
+  });
+
+  final String value;
+  final String label;
+
+  factory ApprovalChoice.fromJson(Map<String, Object?> json) {
+    return ApprovalChoice(
+      value: json['value'] as String? ?? '',
+      label: json['label'] as String? ?? '',
     );
   }
 }

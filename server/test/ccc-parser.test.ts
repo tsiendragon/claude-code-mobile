@@ -189,4 +189,32 @@ describe("ccc parser", () => {
       "Hello! How can I help?"
     ]);
   });
+
+  it("detects numbered choice prompts from ccc read output", () => {
+    const read = parseCccRead(JSON.stringify({
+      state: "ready",
+      lines: [
+        "✨ Update available! 0.128.0 -> 0.130.0",
+        "",
+        "Release notes: https://github.com/openai/codex/releases/latest",
+        "",
+        "› 1. Update now (runs `npm install -g @openai/codex`)",
+        "  2. Skip",
+        "  3. Skip until next version",
+        "",
+        "Press enter to continue"
+      ]
+    }));
+
+    expect(read.state).toBe("choosing");
+    expect(read.pendingApproval).toMatchObject({
+      operationKind: "choice",
+      actions: ["choice"],
+      choices: [
+        { value: "1", label: "Update now (runs `npm install -g @openai/codex`)" },
+        { value: "2", label: "Skip" },
+        { value: "3", label: "Skip until next version" }
+      ]
+    });
+  });
 });

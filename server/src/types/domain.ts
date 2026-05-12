@@ -15,6 +15,11 @@ export type ApprovalScope = {
   operationKind?: ApprovalRecord["operationKind"];
 };
 
+export type ApprovalChoice = {
+  value: string;
+  label: string;
+};
+
 export type ApprovalRecord = {
   approvalId: string;
   sessionId: string;
@@ -24,6 +29,7 @@ export type ApprovalRecord = {
   diffSummary?: string;
   contentHash: string;
   actions: ApprovalAction[];
+  choices?: ApprovalChoice[];
   scope?: ApprovalScope;
   expiresAt: string;
   status: "pending" | "approved" | "rejected" | "expired" | "interrupted";

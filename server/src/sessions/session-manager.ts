@@ -65,7 +65,11 @@ export class SessionManager {
     const backend = input.backend ?? "claude";
     const cccName = buildCccName(name);
     const result = await this.ccc.runSession(cccName, realCwd, backend);
-    if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
+    if (!result.ok) {
+      const recovered = await this.recoverStartedSession(cccName, realCwd, name, backend);
+      if (recovered) return recovered;
+      throw new Error(`${result.code}: ${result.message}`);
+    }
     return this.ensureSession(cccName, realCwd, "ready", name, backend);
   }
 
@@ -218,6 +222,12 @@ export class SessionManager {
     const result = inputResult.ok ? await this.ccc.key(session.cccName, "Enter") : inputResult;
     if (result.ok) {
       this.append(session, { kind: "message_delivered", clientMsgId });
+      if (session.pendingApproval?.operationKind === "choice") {
+        const approvalId = session.pendingApproval.approvalId;
+        session.pendingApproval.status = "approved";
+        session.pendingApproval = undefined;
+        this.append(session, { kind: "approval_resolved", approvalId, status: "approved" });
+      }
       this.updateState(session, "thinking");
       return { delivered: true };
     }
@@ -369,6 +379,30 @@ export class SessionManager {
     } catch {
       // Older ccc builds may not expose history; ccc read still provides a tail fallback.
     }
+  }
+
+  private async recoverStartedSession(
+    cccName: string,
+    cwd: string,
+    displayName: string,
+    backend: SessionBackend
+  ): Promise<SessionRecord | undefined> {
+    const result = await this.ccc.listSessions();
+    if (!result.ok) return undefined;
+    const cccSession = result.data.find((session) => session.name === cccName && session.alive !== false);
+    if (!cccSession) return undefined;
+    const realCwd = await assertAllowedCwd(cccSession.cwd ?? cwd, this.config.allowedPaths, {
+      allowHiddenCwd: this.config.allowHiddenCwd
+    });
+    const session = this.ensureSession(
+      cccName,
+      realCwd,
+      cccSession.state ?? "ready",
+      displayName,
+      cccSession.backend ?? backend
+    );
+    await this.applySnapshot(session.sessionId).catch(() => undefined);
+    return session;
   }
 
   private async resolveManualCwd(cwd: string | undefined): Promise<string> {

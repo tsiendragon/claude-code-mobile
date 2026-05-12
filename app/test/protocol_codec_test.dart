@@ -192,6 +192,27 @@ void main() {
     expect(page.items.single.seq, 1);
   });
 
+  test('parses pending choice approvals', () {
+    final approval = PendingApproval.fromJson({
+      'approval_id': 'appr_123',
+      'session_id': 'sess_abcdefgh',
+      'operation_kind': 'choice',
+      'description': 'Choose an option',
+      'actions': ['choice'],
+      'expires_at': '2026-01-01T00:00:00.000Z',
+      'choices': [
+        {'value': '1', 'label': 'Update now'},
+        {'value': '2', 'label': 'Skip'},
+      ],
+    });
+
+    expect(approval.operationKind, 'choice');
+    expect(approval.choices.map((choice) => choice.label), [
+      'Update now',
+      'Skip',
+    ]);
+  });
+
   test('formats Claude terminal assistant output for chat bubbles', () {
     final item = ChatItem.fromAssistantEvent(
       const BridgeEventEnvelope(

@@ -22,17 +22,21 @@ export function parseCccSessionList(stdout: string): CccSession[] {
 export function parseCccRead(stdout: string): CccReadResult {
   const parsed = JSON.parse(stdout) as Record<string, unknown>;
   const output = parseReadOutput(parsed);
+  const choicePrompt = parseChoicePrompt(parsed.lines, output);
   const parsedItems = parseReadItems(parsed.lines);
   const items: CccTranscriptItem[] | undefined = parsedItems.length > 0
     ? parsedItems
     : output
       ? [{ id: "hist_1", role: "assistant", text: output }]
       : undefined;
+  const pendingApproval = parsePendingApproval(parsed.pendingApproval ?? parsed.pending_approval) ?? choicePrompt;
   return {
-    state: normalizeState(parsed.state) ?? "ready",
+    state: pendingApproval?.operationKind === "choice"
+      ? "choosing"
+      : normalizeState(parsed.state) ?? "ready",
     output,
     items,
-    pendingApproval: parsePendingApproval(parsed.pendingApproval ?? parsed.pending_approval)
+    pendingApproval
   };
 }
 
@@ -84,6 +88,50 @@ function parseReadOutput(parsed: Record<string, unknown>): string | undefined {
 function parseReadItems(input: unknown): CccTranscriptItem[] {
   if (!Array.isArray(input)) return [];
   return parseTranscriptLines(input.filter((item): item is string => typeof item === "string"));
+}
+
+function parseChoicePrompt(linesInput: unknown, output: string | undefined): CccReadResult["pendingApproval"] {
+  const lines = Array.isArray(linesInput)
+    ? linesInput.filter((item): item is string => typeof item === "string")
+    : output
+      ? output.split("\n")
+      : [];
+  if (lines.length === 0) return undefined;
+
+  const cleanedLines = lines.map((line) => cleanTerminalLine(line));
+  const choices = [];
+  for (const line of cleanedLines) {
+    const match = line.match(/^\s*(?:[›>]\s*)?(\d{1,2})[.)]\s+(.+?)\s*$/u);
+    if (!match) continue;
+    const label = match[2].replace(/\s+/g, " ").trim();
+    if (label.length === 0) continue;
+    choices.push({ value: match[1], label });
+  }
+  if (choices.length < 2) return undefined;
+
+  const meaningfulLines = cleanedLines
+    .map((line) => line.trim())
+    .filter((line) =>
+      line.length > 0 &&
+      !isTerminalChromeLine(line) &&
+      !line.toLowerCase().startsWith("press enter") &&
+      !line.startsWith("›")
+    );
+  const title = meaningfulLines.find((line) => !/^\d{1,2}[.)]\s+/.test(line)) ?? "Choose an option";
+  const description = [
+    title,
+    "",
+    ...choices.map((choice) => `${choice.value}. ${choice.label}`)
+  ].join("\n");
+
+  return {
+    operationKind: "choice",
+    description,
+    paths: [],
+    contentHash: createHash("sha256").update(JSON.stringify({ title, choices })).digest("hex"),
+    actions: ["choice"],
+    choices
+  };
 }
 
 function normalizeTranscriptRole(input: unknown): CccTranscriptItem["role"] | undefined {
@@ -248,6 +296,7 @@ function parsePendingApproval(input: unknown): CccReadResult["pendingApproval"] 
   const description = typeof record.description === "string" ? record.description : "Approval requested";
   const paths = Array.isArray(record.paths) ? record.paths.filter((item): item is string => typeof item === "string") : [];
   const actions = normalizeActions(record.actions);
+  const choices = normalizeChoices(record.choices);
   const diffSummary = typeof record.diffSummary === "string"
     ? record.diffSummary
     : typeof record.diff_summary === "string"
@@ -262,8 +311,22 @@ function parsePendingApproval(input: unknown): CccReadResult["pendingApproval"] 
     paths,
     diffSummary,
     contentHash,
-    actions
+    actions,
+    ...(choices.length > 0 ? { choices } : {})
   };
+}
+
+function normalizeChoices(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const choice = {
+      value: String(record.value ?? "").trim(),
+      label: String(record.label ?? "").trim()
+    };
+    return choice.value && choice.label ? [choice] : [];
+  });
 }
 
 function getArrayProperty(input: unknown, property: string): unknown[] {

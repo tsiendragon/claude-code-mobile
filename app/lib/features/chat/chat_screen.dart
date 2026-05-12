@@ -318,13 +318,22 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() => _isApproving = true);
     try {
-      await context.read<BridgeClient>().approve(
-            sessionId: approval.sessionId,
-            approvalId: approval.approvalId,
-            action: action,
-            idempotencyKey:
-                'idem_${approval.approvalId}_${DateTime.now().microsecondsSinceEpoch}',
-          );
+      if (approval.operationKind == 'choice') {
+        await context.read<BridgeClient>().sendCommand(
+              sessionId: approval.sessionId,
+              clientMessageId:
+                  'cmsg_${DateTime.now().microsecondsSinceEpoch.toString()}',
+              command: action,
+            );
+      } else {
+        await context.read<BridgeClient>().approve(
+              sessionId: approval.sessionId,
+              approvalId: approval.approvalId,
+              action: action,
+              idempotencyKey:
+                  'idem_${approval.approvalId}_${DateTime.now().microsecondsSinceEpoch}',
+            );
+      }
       setState(() => _pendingApproval = null);
     } on BridgeException catch (error) {
       setState(() => _error = error.message);

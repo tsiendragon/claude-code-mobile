@@ -65,42 +65,48 @@ class ApprovalCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final action in approval.actions)
-                  _isRejectAction(action)
-                      ? OutlinedButton.icon(
-                          icon: isSubmitting
-                              ? const SizedBox.square(
-                                  dimension: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : Icon(_actionIcon(action)),
-                          label: Text(_actionLabel(action)),
-                          onPressed: isSubmitting
-                              ? null
-                              : () => _submitAction(context, action),
-                        )
-                      : FilledButton.icon(
-                          icon: isSubmitting
-                              ? const SizedBox.square(
-                                  dimension: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : Icon(_actionIcon(action)),
-                          label: Text(_actionLabel(action)),
-                          onPressed: isSubmitting
-                              ? null
-                              : () => _submitAction(context, action),
-                        ),
-              ],
-            ),
+            approval.operationKind == 'choice' && approval.choices.isNotEmpty
+                ? _ChoiceButtons(
+                    choices: approval.choices,
+                    isSubmitting: isSubmitting,
+                    onAction: onAction,
+                  )
+                : Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final action in approval.actions)
+                        _isRejectAction(action)
+                            ? OutlinedButton.icon(
+                                icon: isSubmitting
+                                    ? const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Icon(_actionIcon(action)),
+                                label: Text(_actionLabel(action)),
+                                onPressed: isSubmitting
+                                    ? null
+                                    : () => _submitAction(context, action),
+                              )
+                            : FilledButton.icon(
+                                icon: isSubmitting
+                                    ? const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Icon(_actionIcon(action)),
+                                label: Text(_actionLabel(action)),
+                                onPressed: isSubmitting
+                                    ? null
+                                    : () => _submitAction(context, action),
+                              ),
+                    ],
+                  ),
           ],
         ),
       ),
@@ -192,5 +198,42 @@ class ApprovalCard extends StatelessWidget {
     final hour = local.hour.toString().padLeft(2, '0');
     final minute = local.minute.toString().padLeft(2, '0');
     return 'expires $hour:$minute';
+  }
+}
+
+class _ChoiceButtons extends StatelessWidget {
+  const _ChoiceButtons({
+    required this.choices,
+    required this.isSubmitting,
+    required this.onAction,
+  });
+
+  final List<ApprovalChoice> choices;
+  final bool isSubmitting;
+  final ValueChanged<String> onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final choice in choices) ...[
+          FilledButton.tonalIcon(
+            icon: isSubmitting
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.touch_app),
+            label: Align(
+              alignment: Alignment.centerLeft,
+              child: Text('${choice.value}. ${choice.label}'),
+            ),
+            onPressed: isSubmitting ? null : () => onAction(choice.value),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
   }
 }
