@@ -58,6 +58,10 @@ export type FileReadRequest = SessionIdRequest & {
   path: string;
 };
 
+export type FileListRequest = SessionIdRequest & {
+  type: "file.list";
+};
+
 export type ImageUploadBeginRequest = SessionIdRequest & {
   type: "image.upload.begin";
   name: string;
@@ -88,6 +92,7 @@ export type SupportedRequest =
   | ImageUploadBeginRequest
   | ImageUploadChunkRequest
   | ImageUploadFinishRequest
+  | FileListRequest
   | FileReadRequest
   | EventsSyncRequest;
 

@@ -116,6 +116,14 @@ describe("protocol validators", () => {
     }, 1000).ok).toBe(true);
   });
 
+  it("accepts file.list with a session id", () => {
+    expect(validateRequest({
+      type: "file.list",
+      id: "req_1",
+      session_id: "sess_abcdefgh"
+    }, 1000).ok).toBe(true);
+  });
+
   it("accepts paginated message history requests", () => {
     expect(validateRequest({
       type: "messages.list",

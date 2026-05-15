@@ -1,5 +1,5 @@
 import { randomBytes, createHash } from "node:crypto";
-import { mkdir, open, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, opendir, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { BridgeConfig } from "../config.js";
 import type { CccClient } from "../ccc/ccc-client.js";
@@ -138,6 +138,14 @@ export class SessionManager {
       files.push(fileMetadata(realPath, session.cwd, info.size));
     }
 
+    return { files };
+  }
+
+  async listFiles(sessionId: string) {
+    const session = this.requireSession(sessionId);
+    const files: Array<ReturnType<typeof fileMetadata>> = [];
+    await collectListableFiles(session.cwd, session.cwd, files);
+    files.sort((a, b) => a.relative_path.localeCompare(b.relative_path));
     return { files };
   }
 
@@ -552,6 +560,126 @@ function fileMetadata(filePath: string, cwd: string, bytes: number) {
     bytes,
     language: detectLanguage(filePath)
   };
+}
+
+const MAX_LISTED_SESSION_FILES = 1000;
+const MAX_LISTED_SESSION_FILE_DEPTH = 10;
+
+const SKIPPED_FILE_LIST_DIRS = new Set([
+  ".ccm-mobile",
+  ".dart_tool",
+  ".git",
+  ".gradle",
+  ".idea",
+  ".next",
+  ".nuxt",
+  ".pytest_cache",
+  ".venv",
+  ".vscode",
+  "build",
+  "coverage",
+  "DerivedData",
+  "dist",
+  "node_modules",
+  "Pods",
+  "target",
+  "vendor"
+]);
+
+const LISTABLE_FILE_NAMES = new Set([
+  "dockerfile",
+  "makefile"
+]);
+
+const LISTABLE_FILE_EXTENSIONS = new Set([
+  "bash",
+  "c",
+  "cc",
+  "cjs",
+  "cpp",
+  "cs",
+  "css",
+  "csv",
+  "dart",
+  "env",
+  "go",
+  "gradle",
+  "h",
+  "hpp",
+  "html",
+  "java",
+  "js",
+  "json",
+  "jsx",
+  "kt",
+  "lock",
+  "lua",
+  "m",
+  "markdown",
+  "md",
+  "mjs",
+  "php",
+  "py",
+  "r",
+  "rb",
+  "rs",
+  "scss",
+  "sh",
+  "sql",
+  "swift",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "xml",
+  "yaml",
+  "yml",
+  "zsh"
+]);
+
+async function collectListableFiles(
+  cwd: string,
+  dir: string,
+  files: Array<ReturnType<typeof fileMetadata>>,
+  depth = 0
+) {
+  if (files.length >= MAX_LISTED_SESSION_FILES || depth > MAX_LISTED_SESSION_FILE_DEPTH) return;
+
+  let directory;
+  try {
+    directory = await opendir(dir);
+  } catch {
+    return;
+  }
+
+  for await (const entry of directory) {
+    if (files.length >= MAX_LISTED_SESSION_FILES) return;
+    if (entry.name.startsWith(".")) continue;
+
+    const candidate = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      if (SKIPPED_FILE_LIST_DIRS.has(entry.name)) continue;
+      const realDir = await realpath(candidate).catch(() => undefined);
+      if (!realDir || !isPathInside(realDir, cwd)) continue;
+      await collectListableFiles(cwd, realDir, files, depth + 1);
+      continue;
+    }
+
+    if (!entry.isFile() || !isListableTextFile(candidate)) continue;
+    const realFile = await realpath(candidate).catch(() => undefined);
+    if (!realFile || !isPathInside(realFile, cwd)) continue;
+    const info = await stat(realFile).catch(() => undefined);
+    if (!info?.isFile()) continue;
+    files.push(fileMetadata(realFile, cwd, info.size));
+  }
+}
+
+function isListableTextFile(filePath: string): boolean {
+  const base = path.basename(filePath).toLowerCase();
+  if (LISTABLE_FILE_NAMES.has(base)) return true;
+  const ext = path.extname(base).replace(/^\./, "");
+  return LISTABLE_FILE_EXTENSIONS.has(ext);
 }
 
 function sanitizeUploadName(name: string): string {

@@ -334,6 +334,21 @@ class BridgeClient extends ChangeNotifier {
     return FilePreview.fromJson(data);
   }
 
+  Future<List<FileReference>> listFiles({
+    required String sessionId,
+  }) async {
+    final data = await request('file.list', {
+      'session_id': sessionId,
+    });
+    final files = data['files'];
+    if (files is! List) return const [];
+    return files
+        .whereType<Map>()
+        .map((raw) => FileReference.fromJson(Map<String, Object?>.from(raw)))
+        .where((reference) => reference.path.isNotEmpty)
+        .toList(growable: false);
+  }
+
   Future<List<FileReference>> resolveFileReferences({
     required String sessionId,
     required List<FileReference> references,

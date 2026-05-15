@@ -18,6 +18,7 @@ const requestTypes = new Set([
   "image.upload.begin",
   "image.upload.chunk",
   "image.upload.finish",
+  "file.list",
   "file.resolve",
   "file.read",
   "events.sync"
@@ -170,6 +171,7 @@ function requiresSession(type: string): boolean {
     "image.upload.begin",
     "image.upload.chunk",
     "image.upload.finish",
+    "file.list",
     "file.resolve",
     "file.read",
     "events.sync"

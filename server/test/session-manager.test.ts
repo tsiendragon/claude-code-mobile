@@ -232,6 +232,44 @@ describe("SessionManager", () => {
     await expect(manager.readFile(session.sessionId, path.join(root, "outside.md"))).rejects.toThrow("PATH_NOT_ALLOWED");
   });
 
+  it("lists previewable markdown and code files in the session cwd", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const workspaces = new WorkspaceService(cfg);
+    await workspaces.create("demo-app");
+    const ccc = {
+      runSession: async (name: string) => {
+        return { ok: true, stdout: "", stderr: "", data: { name } } as const;
+      }
+    } as unknown as CccClient;
+
+    const manager = new SessionManager(cfg, ccc, workspaces, new InMemoryEventStore(20));
+    const session = await manager.run({
+      name: "Demo",
+      workspaceId: "demo-app"
+    });
+
+    await mkdir(path.join(session.cwd, "src"), { recursive: true });
+    await mkdir(path.join(session.cwd, "node_modules", "pkg"), { recursive: true });
+    await mkdir(path.join(session.cwd, ".hidden"), { recursive: true });
+    await mkdir(path.join(session.cwd, ".ccm-mobile", "uploads"), { recursive: true });
+    await writeFile(path.join(session.cwd, "README.md"), "# Demo", "utf8");
+    await writeFile(path.join(session.cwd, "src", "main.ts"), "export {}", "utf8");
+    await writeFile(path.join(session.cwd, "photo.png"), "not a real png", "utf8");
+    await writeFile(path.join(session.cwd, "node_modules", "pkg", "index.js"), "module.exports = {}", "utf8");
+    await writeFile(path.join(session.cwd, ".hidden", "secret.md"), "# Secret", "utf8");
+    await writeFile(path.join(session.cwd, ".ccm-mobile", "uploads", "prompt.md"), "# Upload", "utf8");
+
+    const result = await manager.listFiles(session.sessionId);
+    const relativePaths = result.files.map((file) => file.relative_path);
+
+    expect(relativePaths).toEqual(["README.md", "src/main.ts"]);
+    expect(result.files[0]).toMatchObject({
+      name: "README.md",
+      language: "markdown"
+    });
+  });
+
   it("stores uploaded images inside the session cwd", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
     const cfg = config(root);

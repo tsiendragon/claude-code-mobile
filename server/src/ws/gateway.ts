@@ -214,6 +214,11 @@ export class WsGateway {
             String(request.upload_id)
           )));
           break;
+        case "file.list":
+          this.send(socket, ok(request.id, await this.sessions.listFiles(
+            String(request.session_id)
+          )));
+          break;
         case "file.resolve":
           this.send(socket, ok(request.id, await this.sessions.resolveFiles(
             String(request.session_id),
