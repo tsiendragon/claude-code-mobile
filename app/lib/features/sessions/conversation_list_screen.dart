@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/config/server_config.dart';
 import '../../core/config/server_config_controller.dart';
+import '../../core/utils/format_utils.dart';
 import '../../protocol/client.dart';
 import '../../protocol/models.dart';
 import '../chat/chat_screen.dart';
@@ -682,6 +683,7 @@ class _ConnectionBanner extends StatelessWidget {
     };
 
     final connected = state == BridgeConnectionState.connected;
+    if (connected) return const SizedBox.shrink();
     final canAct = state == BridgeConnectionState.disconnected ||
         state == BridgeConnectionState.error;
     return Container(
@@ -831,7 +833,7 @@ class _ConnectionProfilePanel extends StatelessWidget {
   }
 }
 
-class _SystemStatsPanel extends StatelessWidget {
+class _SystemStatsPanel extends StatefulWidget {
   const _SystemStatsPanel({
     required this.stats,
     required this.isLoading,
@@ -845,10 +847,17 @@ class _SystemStatsPanel extends StatelessWidget {
   final VoidCallback onRefresh;
 
   @override
+  State<_SystemStatsPanel> createState() => _SystemStatsPanelState();
+}
+
+class _SystemStatsPanelState extends State<_SystemStatsPanel> {
+  bool _expanded = true;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final stats = this.stats;
+    final stats = widget.stats;
 
     return Container(
       width: double.infinity,
@@ -861,8 +870,8 @@ class _SystemStatsPanel extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    error ??
-                        (isLoading
+                    widget.error ??
+                        (widget.isLoading
                             ? 'Loading server stats'
                             : 'Server stats unavailable'),
                     maxLines: 2,
@@ -871,13 +880,13 @@ class _SystemStatsPanel extends StatelessWidget {
                 ),
                 IconButton(
                   tooltip: 'Refresh stats',
-                  icon: isLoading
+                  icon: widget.isLoading
                       ? const SizedBox.square(
                           dimension: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.refresh),
-                  onPressed: isLoading ? null : onRefresh,
+                  onPressed: widget.isLoading ? null : widget.onRefresh,
                 ),
               ],
             )
@@ -899,42 +908,54 @@ class _SystemStatsPanel extends StatelessWidget {
                     ),
                     IconButton(
                       tooltip: 'Refresh stats',
-                      icon: isLoading
+                      icon: widget.isLoading
                           ? const SizedBox.square(
                               dimension: 18,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.refresh),
-                      onPressed: isLoading ? null : onRefresh,
+                      onPressed: widget.isLoading ? null : widget.onRefresh,
+                    ),
+                    IconButton(
+                      tooltip: _expanded ? 'Collapse' : 'Expand',
+                      icon: Icon(
+                        _expanded
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                      ),
+                      onPressed: () =>
+                          setState(() => _expanded = !_expanded),
                     ),
                   ],
                 ),
-                const SizedBox(height: 6),
-                _MetricBar(
-                  label: 'CPU',
-                  value: stats.cpuPercent,
-                  trailing: stats.cpuPercent == null
-                      ? 'n/a'
-                      : '${stats.cpuPercent!.toStringAsFixed(0)}%',
-                ),
-                const SizedBox(height: 8),
-                _MetricBar(
-                  label: 'Memory',
-                  value: stats.memory.usedPercent,
-                  trailing:
-                      '${_formatBytes(stats.memory.usedBytes)} / ${_formatBytes(stats.memory.totalBytes)}',
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  [
-                    if (stats.loadAverage.isNotEmpty)
-                      'load ${stats.loadAverage.map((value) => value.toStringAsFixed(2)).join(' / ')}',
-                    if (stats.cpuCount > 0) '${stats.cpuCount} CPU',
-                    if (stats.uptimeSeconds > 0)
-                      'up ${_formatDuration(stats.uptimeSeconds)}',
-                  ].join(' · '),
-                  style: theme.textTheme.bodySmall,
-                ),
+                if (_expanded) ...[
+                  const SizedBox(height: 6),
+                  _MetricBar(
+                    label: 'CPU',
+                    value: stats.cpuPercent,
+                    trailing: stats.cpuPercent == null
+                        ? 'n/a'
+                        : '${stats.cpuPercent!.toStringAsFixed(0)}%',
+                  ),
+                  const SizedBox(height: 8),
+                  _MetricBar(
+                    label: 'Memory',
+                    value: stats.memory.usedPercent,
+                    trailing:
+                        '${formatBytes(stats.memory.usedBytes)} / ${formatBytes(stats.memory.totalBytes)}',
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    [
+                      if (stats.loadAverage.isNotEmpty)
+                        'load ${stats.loadAverage.map((value) => value.toStringAsFixed(2)).join(' / ')}',
+                      if (stats.cpuCount > 0) '${stats.cpuCount} CPU',
+                      if (stats.uptimeSeconds > 0)
+                        'up ${_formatDuration(stats.uptimeSeconds)}',
+                    ].join(' · '),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ],
               ],
             ),
     );
@@ -1004,13 +1025,22 @@ class _SessionTile extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (badge != null) _StatusBadge(text: badge),
+          if (badge != null)
+              _StatusBadge(
+                text: badge,
+                color: _statusBadgeColor(
+                  Theme.of(context).colorScheme,
+                  session,
+                ),
+              ),
         ],
       ),
       subtitle: Text(
         [
-          session.state.name,
+          sessionStateLabel(session.state),
           sessionBackendLabel(session.backend),
+          if (session.lastActiveAt != null)
+            _formatRelativeTime(session.lastActiveAt!),
           if (path != null) path,
           if (session.lastMessage != null) session.lastMessage!,
         ].join(' · '),
@@ -1051,6 +1081,14 @@ class _SessionTile extends StatelessWidget {
     return null;
   }
 
+  Color _statusBadgeColor(ColorScheme colorScheme, SessionSummary session) {
+    if (session.state == SessionState.approval ||
+        session.state == SessionState.choosing) {
+      return colorScheme.errorContainer;
+    }
+    return colorScheme.tertiaryContainer;
+  }
+
   String? _shortPath(String? cwd) {
     if (cwd == null || cwd.isEmpty) return null;
     const marker = '/workspace/';
@@ -1065,15 +1103,6 @@ class _SessionTile extends StatelessWidget {
   }
 }
 
-String _formatBytes(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  final kb = bytes / 1024;
-  if (kb < 1024) return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} KB';
-  final mb = kb / 1024;
-  if (mb < 1024) return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
-  final gb = mb / 1024;
-  return '${gb.toStringAsFixed(gb < 10 ? 1 : 0)} GB';
-}
 
 String _formatDuration(int seconds) {
   final days = seconds ~/ 86400;
@@ -1084,19 +1113,33 @@ String _formatDuration(int seconds) {
   return '${minutes}m';
 }
 
+String _formatRelativeTime(DateTime time) {
+  final diff = DateTime.now().difference(time.toLocal());
+  if (diff.inSeconds < 60) return 'just now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+  if (diff.inHours < 24) return '${diff.inHours}h ago';
+  if (diff.inDays < 7) return '${diff.inDays}d ago';
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+  final local = time.toLocal();
+  return '${months[local.month - 1]} ${local.day}';
+}
+
 class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.text});
+  const _StatusBadge({required this.text, required this.color});
 
   final String text;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       margin: const EdgeInsets.only(left: 8),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: colorScheme.errorContainer,
+        color: color,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(

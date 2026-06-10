@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:provider/provider.dart';
 
+import '../../core/utils/format_utils.dart';
 import '../../protocol/client.dart';
 import '../../protocol/models.dart';
 import '../approvals/approval_card.dart';
@@ -85,7 +87,7 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             Text(session.name),
             Text(
-              '${sessionBackendLabel(session.backend)} · ${session.state.name}',
+              '${sessionBackendLabel(session.backend)} · ${sessionStateLabel(session.state)}',
               style: Theme.of(context).textTheme.labelMedium,
             ),
           ],
@@ -123,8 +125,17 @@ class _ChatScreenState extends State<ChatScreen> {
               Container(
                 width: double.infinity,
                 color: Theme.of(context).colorScheme.errorContainer,
-                padding: const EdgeInsets.all(8),
-                child: Text(_error!),
+                padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+                child: Row(
+                  children: [
+                    Expanded(child: Text(_error!)),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => setState(() => _error = null),
+                    ),
+                  ],
+                ),
               ),
             Expanded(
               child: _isLoading
@@ -138,7 +149,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           padding: const EdgeInsets.fromLTRB(16, 16, 16, 72),
                           itemCount: _items.length +
                               (_showHistoryHeader ? 1 : 0) +
-                              (_pendingApproval == null ? 0 : 1),
+                              (_hasTrailingItem ? 1 : 0),
                           itemBuilder: (context, index) {
                             if (_showHistoryHeader && index == 0) {
                               return _HistoryLoader(
@@ -162,13 +173,19 @@ class _ChatScreenState extends State<ChatScreen> {
                               );
                             }
 
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 12),
-                              child: ApprovalCard(
-                                approval: _pendingApproval!,
-                                isSubmitting: _isApproving,
-                                onAction: _approve,
-                              ),
+                            if (_pendingApproval != null) {
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 12),
+                                child: ApprovalCard(
+                                  approval: _pendingApproval!,
+                                  isSubmitting: _isApproving,
+                                  onAction: _approve,
+                                ),
+                              );
+                            }
+                            return const Padding(
+                              padding: EdgeInsets.only(top: 4),
+                              child: _ThinkingBubble(),
                             );
                           },
                         ),
@@ -480,7 +497,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     buffer.writeln('Attached image${attachments.length == 1 ? '' : 's'}:');
     for (final image in attachments) {
-      buffer.writeln('- ${image.name} (${_formatBytes(image.bytes.length)})');
+      buffer.writeln('- ${image.name} (${formatBytes(image.bytes.length)})');
     }
     return buffer.toString().trimRight();
   }
@@ -502,6 +519,7 @@ class _ChatScreenState extends State<ChatScreen> {
             cwd: _session?.cwd,
             lastMessage: _session?.lastMessage,
             needsAttention: _session?.needsAttention ?? false,
+            lastActiveAt: DateTime.now(),
           );
           break;
         case 'assistant_message':
@@ -649,6 +667,15 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   bool get _showHistoryHeader => _hasMoreHistory || _isLoadingHistory;
+
+  bool get _isThinking {
+    final state = (_session ?? widget.session).state;
+    if (state != SessionState.thinking) return false;
+    if (_pendingApproval != null || _isLoading) return false;
+    return _items.isEmpty || _items.last.role == ChatItemRole.user;
+  }
+
+  bool get _hasTrailingItem => _pendingApproval != null || _isThinking;
 
   Future<void> _loadEarlierMessages() async {
     if (_isLoadingHistory || !_hasMoreHistory) return;
@@ -815,7 +842,7 @@ class _PendingImageStrip extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                       Text(
-                        _formatBytes(image.bytes.length),
+                        formatBytes(image.bytes.length),
                         style: Theme.of(context).textTheme.labelSmall,
                       ),
                     ],
@@ -962,7 +989,9 @@ class _ChatBubble extends StatelessWidget {
   }
 
   bool _isCollapsible(String text) {
-    return text.length > 1200 || '\n'.allMatches(text).length >= 18;
+    return text.length > 800 ||
+        '\n'.allMatches(text).length >= 12 ||
+        text.contains('```');
   }
 }
 
@@ -986,8 +1015,9 @@ class _MessageBody extends StatelessWidget {
       child: ClipRect(
         child: Stack(
           children: [
-            SingleChildScrollView(
-              physics: const NeverScrollableScrollPhysics(),
+            OverflowBox(
+              alignment: Alignment.topLeft,
+              maxHeight: double.infinity,
               child: child,
             ),
             Positioned(
@@ -1082,6 +1112,12 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
             _openMarkdownLink(href, fileReferences, widget.onOpenFile);
           },
           softLineBreak: true,
+          builders: {
+            'pre': _CodeBlockBuilder(
+              colorScheme: colorScheme,
+              codeStyle: codeStyle,
+            ),
+          },
           styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
             a: bodyStyle?.copyWith(
               color: colorScheme.primary,
@@ -1092,11 +1128,6 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
             blockSpacing: 8,
             listIndent: 20,
             code: codeStyle,
-            codeblockPadding: const EdgeInsets.all(10),
-            codeblockDecoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(6),
-            ),
             blockquotePadding: const EdgeInsets.only(left: 10),
             blockquoteDecoration: BoxDecoration(
               border: Border(
@@ -1395,7 +1426,7 @@ class _FilePreviewBody extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${preview.language} · ${_formatBytes(preview.bytes)}',
+                  '${preview.language} · ${formatBytes(preview.bytes)}',
                   style: theme.textTheme.labelMedium,
                 ),
               ],
@@ -1685,15 +1716,142 @@ IconData _fileIcon(FileReference file) {
 }
 
 String _fileSubtitle(FileReference file) {
-  final size = file.bytes == null ? null : _formatBytes(file.bytes!);
+  final size = file.bytes == null ? null : formatBytes(file.bytes!);
   if (size == null) return file.language;
   return '${file.language} · $size';
 }
 
-String _formatBytes(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  final kb = bytes / 1024;
-  if (kb < 1024) return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} KB';
-  final mb = kb / 1024;
-  return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
+class _ThinkingBubble extends StatefulWidget {
+  const _ThinkingBubble();
+
+  @override
+  State<_ThinkingBubble> createState() => _ThinkingBubbleState();
 }
+
+class _ThinkingBubbleState extends State<_ThinkingBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  static double _dotOpacity(double t, int index) {
+    final phase = (t - index / 3.0 + 1.0) % 1.0;
+    if (phase < 0.25) return 0.25 + 0.75 * (phase / 0.25);
+    if (phase < 0.5) return 1.0 - 0.75 * ((phase - 0.25) / 0.25);
+    return 0.25;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Material(
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, _) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: List.generate(3, (index) {
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: colorScheme.onSurfaceVariant.withValues(
+                        alpha: _dotOpacity(_controller.value, index),
+                      ),
+                      shape: BoxShape.circle,
+                    ),
+                  );
+                }),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CopyCodeButton extends StatefulWidget {
+  const _CopyCodeButton({required this.text});
+
+  final String text;
+
+  @override
+  State<_CopyCodeButton> createState() => _CopyCodeButtonState();
+}
+
+class _CopyCodeButtonState extends State<_CopyCodeButton> {
+  bool _copied = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: _copied ? 'Copied!' : 'Copy code',
+      icon: Icon(_copied ? Icons.check : Icons.copy, size: 16),
+      visualDensity: VisualDensity.compact,
+      onPressed: () async {
+        await Clipboard.setData(ClipboardData(text: widget.text));
+        if (!mounted) return;
+        setState(() => _copied = true);
+        await Future.delayed(const Duration(seconds: 2));
+        if (mounted) setState(() => _copied = false);
+      },
+    );
+  }
+}
+
+class _CodeBlockBuilder extends MarkdownElementBuilder {
+  _CodeBlockBuilder({required this.colorScheme, required this.codeStyle});
+
+  final ColorScheme colorScheme;
+  final TextStyle? codeStyle;
+
+  @override
+  Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) {
+    final code = element.textContent.trimRight();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: SizedBox(
+              width: double.infinity,
+              child: SelectableText(code, style: codeStyle),
+            ),
+          ),
+          Positioned(
+            top: 4,
+            right: 4,
+            child: _CopyCodeButton(text: code),
+          ),
+        ],
+      ),
+    );
+  }
+}
+

@@ -113,4 +113,5 @@ export type SessionSummary = {
   state: SessionState;
   last_seq: number;
   needs_attention: boolean;
+  updated_at?: string;
 };

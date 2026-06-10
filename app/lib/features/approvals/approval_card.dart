@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../protocol/models.dart';
 
-class ApprovalCard extends StatelessWidget {
+class ApprovalCard extends StatefulWidget {
   const ApprovalCard({
     super.key,
     required this.approval,
@@ -15,8 +15,55 @@ class ApprovalCard extends StatelessWidget {
   final ValueChanged<String> onAction;
 
   @override
+  State<ApprovalCard> createState() => _ApprovalCardState();
+}
+
+class _ApprovalCardState extends State<ApprovalCard> {
+  String? _pendingAction;
+
+  @override
+  void didUpdateWidget(ApprovalCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isSubmitting && !widget.isSubmitting) {
+      setState(() => _pendingAction = null);
+    }
+  }
+
+  bool _isActive(String action) =>
+      widget.isSubmitting && _pendingAction == action;
+
+  Future<void> _submitAction(BuildContext context, String action) async {
+    if (action == 'always') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Always approve?'),
+          content: const Text(
+            'This applies only to matching low-risk actions in this session.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              icon: const Icon(Icons.done_all),
+              label: const Text('Always'),
+              onPressed: () => Navigator.of(context).pop(true),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    setState(() => _pendingAction = action);
+    widget.onAction(action);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final approval = widget.approval;
     return Material(
       color: colorScheme.surfaceContainerHighest,
       borderRadius: BorderRadius.circular(8),
@@ -68,8 +115,9 @@ class ApprovalCard extends StatelessWidget {
             approval.operationKind == 'choice' && approval.choices.isNotEmpty
                 ? _ChoiceButtons(
                     choices: approval.choices,
-                    isSubmitting: isSubmitting,
-                    onAction: onAction,
+                    isSubmitting: widget.isSubmitting,
+                    pendingAction: _pendingAction,
+                    onAction: (action) => _submitAction(context, action),
                   )
                 : Wrap(
                     spacing: 8,
@@ -78,7 +126,7 @@ class ApprovalCard extends StatelessWidget {
                       for (final action in approval.actions)
                         _isRejectAction(action)
                             ? OutlinedButton.icon(
-                                icon: isSubmitting
+                                icon: _isActive(action)
                                     ? const SizedBox.square(
                                         dimension: 16,
                                         child: CircularProgressIndicator(
@@ -87,12 +135,12 @@ class ApprovalCard extends StatelessWidget {
                                       )
                                     : Icon(_actionIcon(action)),
                                 label: Text(_actionLabel(action)),
-                                onPressed: isSubmitting
+                                onPressed: widget.isSubmitting
                                     ? null
                                     : () => _submitAction(context, action),
                               )
                             : FilledButton.icon(
-                                icon: isSubmitting
+                                icon: _isActive(action)
                                     ? const SizedBox.square(
                                         dimension: 16,
                                         child: CircularProgressIndicator(
@@ -101,7 +149,7 @@ class ApprovalCard extends StatelessWidget {
                                       )
                                     : Icon(_actionIcon(action)),
                                 label: Text(_actionLabel(action)),
-                                onPressed: isSubmitting
+                                onPressed: widget.isSubmitting
                                     ? null
                                     : () => _submitAction(context, action),
                               ),
@@ -111,33 +159,6 @@ class ApprovalCard extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  Future<void> _submitAction(BuildContext context, String action) async {
-    if (action == 'always') {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Always approve?'),
-          content: const Text(
-            'This applies only to matching low-risk actions in this session.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton.icon(
-              icon: const Icon(Icons.done_all),
-              label: const Text('Always'),
-              onPressed: () => Navigator.of(context).pop(true),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-    }
-    onAction(action);
   }
 
   String _operationLabel(String operationKind) {
@@ -205,11 +226,13 @@ class _ChoiceButtons extends StatelessWidget {
   const _ChoiceButtons({
     required this.choices,
     required this.isSubmitting,
+    required this.pendingAction,
     required this.onAction,
   });
 
   final List<ApprovalChoice> choices;
   final bool isSubmitting;
+  final String? pendingAction;
   final ValueChanged<String> onAction;
 
   @override
@@ -219,7 +242,7 @@ class _ChoiceButtons extends StatelessWidget {
       children: [
         for (final choice in choices) ...[
           FilledButton.tonalIcon(
-            icon: isSubmitting
+            icon: (isSubmitting && pendingAction == choice.value)
                 ? const SizedBox.square(
                     dimension: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),

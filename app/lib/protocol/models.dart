@@ -58,6 +58,18 @@ String sessionBackendLabel(SessionBackend backend) {
   };
 }
 
+String sessionStateLabel(SessionState state) {
+  return switch (state) {
+    SessionState.ready => 'Ready',
+    SessionState.thinking => 'Thinking...',
+    SessionState.approval => 'Needs approval',
+    SessionState.choosing => 'Needs choice',
+    SessionState.error => 'Error',
+    SessionState.ended => 'Ended',
+    SessionState.unknown => 'Unknown',
+  };
+}
+
 class BridgeError {
   const BridgeError({
     required this.code,
@@ -157,6 +169,7 @@ class SessionSummary {
     this.cwd,
     this.lastMessage,
     this.needsAttention = false,
+    this.lastActiveAt,
   });
 
   final String sessionId;
@@ -167,8 +180,11 @@ class SessionSummary {
   final String? cwd;
   final String? lastMessage;
   final bool needsAttention;
+  final DateTime? lastActiveAt;
 
   factory SessionSummary.fromJson(Map<String, Object?> json) {
+    final updatedAtRaw =
+        json['updated_at'] as String? ?? json['updatedAt'] as String?;
     return SessionSummary(
       sessionId:
           json['session_id'] as String? ?? json['sessionId'] as String? ?? '',
@@ -182,6 +198,8 @@ class SessionSummary {
       needsAttention: json['needs_attention'] as bool? ??
           json['needsAttention'] as bool? ??
           false,
+      lastActiveAt:
+          updatedAtRaw != null ? DateTime.tryParse(updatedAtRaw) : null,
     );
   }
 }

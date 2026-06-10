@@ -548,7 +548,8 @@ function toSummary(session: SessionRecord): SessionSummary {
     cwd: session.cwd,
     state: session.state,
     last_seq: session.lastSeq,
-    needs_attention: session.state === "approval" || session.state === "choosing"
+    needs_attention: session.state === "approval" || session.state === "choosing",
+    updated_at: session.updatedAt,
   };
 }
 
