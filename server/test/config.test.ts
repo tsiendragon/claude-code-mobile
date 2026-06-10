@@ -50,4 +50,17 @@ describe("loadConfig", () => {
     expect(config.tokenSource).toBe("env");
     expect(config.tokenEnv).toBe("CCM_TEST_TOKEN");
   });
+
+  it("defaults allowed paths to workspace root and home apps", async () => {
+    process.env.CCM_TOKEN = "t".repeat(32);
+    const dir = await mkdtemp(path.join(os.tmpdir(), "ccm-config-"));
+    process.env.CCM_WORKSPACE_ROOT = dir;
+
+    const config = await loadConfig();
+
+    expect(config.allowedPaths).toEqual([
+      dir,
+      path.join(os.homedir(), "apps")
+    ]);
+  });
 });

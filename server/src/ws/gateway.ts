@@ -33,6 +33,10 @@ export class WsGateway {
     });
     this.wss.on("connection", (socket, request) => {
       if (request.url && request.url !== "/" && request.url !== "/ws") {
+        this.logger.warn("ws_rejected_path", {
+          remote_address: request.socket.remoteAddress ?? "unknown",
+          path: request.url
+        });
         socket.close(1008, "unsupported path");
         return;
       }
@@ -52,9 +56,11 @@ export class WsGateway {
   private handleConnection(socket: WebSocket, remoteAddress: string) {
     let state: ConnectionState = "authenticating";
     let tokenVersionAtAuth: string | undefined;
+    this.logger.info("ws_connected", { remote_address: remoteAddress });
     const authTimer = setTimeout(() => {
       if (state !== "authenticated") {
         state = "closing";
+        this.logger.warn("ws_auth_timeout", { remote_address: remoteAddress });
         socket.close(4001, "AUTH_TIMEOUT");
       }
     }, 5000);
@@ -76,11 +82,13 @@ export class WsGateway {
       const request = validation.request;
       if (state !== "authenticated") {
         if (request.type !== "auth") {
+          this.logger.warn("ws_auth_failed", { remote_address: remoteAddress, code: "AUTH_FAILED" });
           socket.close(4003, "AUTH_FAILED");
           return;
         }
         const result = this.auth.authenticate(request, remoteAddress);
         if (!result.ok) {
+          this.logger.warn("ws_auth_failed", { remote_address: remoteAddress, code: result.code });
           socket.close(result.code === "RATE_LIMITED" ? 4008 : 4003, result.code);
           return;
         }
@@ -103,7 +111,13 @@ export class WsGateway {
       await this.handleRequest(socket, request);
     });
 
-    socket.on("close", () => {
+    socket.on("close", (code, reason) => {
+      this.logger.info("ws_closed", {
+        remote_address: remoteAddress,
+        code,
+        reason: reason.toString("utf8"),
+        state
+      });
       state = "closing";
       clearTimeout(authTimer);
       if (this.activeSocket === socket) this.activeSocket = undefined;

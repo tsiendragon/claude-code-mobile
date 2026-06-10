@@ -21,7 +21,12 @@ if (config.host === "0.0.0.0") {
   });
 }
 
-const httpServer = http.createServer((_request, response) => {
+const httpServer = http.createServer((request, response) => {
+  logger.info("http_request", {
+    method: request.method,
+    url: request.url,
+    remote_address: request.socket.remoteAddress ?? "unknown"
+  });
   response.writeHead(404);
   response.end("Not Found");
 });

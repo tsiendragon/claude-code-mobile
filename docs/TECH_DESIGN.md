@@ -119,7 +119,7 @@ MVP 可以先实现 `files/` 空壳，Phase 2 再启用文件读取。
   "port": 8900,
   "token_env": "CCM_TOKEN",
   "workspace_root": "~/workspace",
-  "allowed_paths": ["~/workspace"],
+  "allowed_paths": ["~/workspace", "~/apps"],
   "allow_manual_cwd": true,
   "ccc_bin": "ccc",
   "poll_interval_ms": 1000,
@@ -139,7 +139,7 @@ MVP 可以先实现 `files/` 空壳，Phase 2 再启用文件读取。
 - 监听 `0.0.0.0` 时必须设置 `allow_wide_bind: true`，并打印高风险警告。
 - 如果未提供 Token，开发模式可以交互式生成并打印一次；生产部署必须从配置文件或环境变量读取。
 - `workspace_root` 默认 `~/workspace`，App 普通创建流程只允许创建其一级子目录。
-- `allowed_paths` 默认等于 `workspace_root`，禁止设置为 `/`。
+- `allowed_paths` 默认包含 `workspace_root` 和 `~/apps`，禁止设置为 `/`。
 - 高级 `cwd` 只有在 `allow_manual_cwd: true` 时可用，且必须解析在 `allowed_paths` 内。
 - Bridge 检测到 root 运行时直接退出。
 

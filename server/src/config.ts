@@ -55,7 +55,9 @@ export async function loadConfig(configPath?: string): Promise<BridgeConfig> {
   const token = configuredToken ?? envToken ?? generateDevToken();
   const tokenSource = configuredToken ? "config" : envToken ? "env" : "generated";
   const workspaceRoot = expandHome(raw.workspace_root ?? process.env.CCM_WORKSPACE_ROOT ?? "~/workspace");
-  const allowedPaths = (raw.allowed_paths ?? [workspaceRoot]).map(expandHome);
+  const allowedPaths = raw.allowed_paths
+    ? raw.allowed_paths.map(expandHome)
+    : uniquePaths([workspaceRoot, "~/apps"]);
   const dataDir = expandHome(raw.data_dir ?? process.env.CCM_DATA_DIR ?? "~/.ccm-bridge");
 
   const config: BridgeConfig = {
@@ -129,6 +131,10 @@ function numberFromEnv(name: string, fallback: number): number {
   if (!value) return fallback;
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : fallback;
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return [...new Set(paths.map(expandHome))];
 }
 
 function generateDevToken(): string {

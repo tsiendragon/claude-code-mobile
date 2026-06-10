@@ -1,9 +1,8 @@
 {
-  "host": "127.0.0.1",
+  "host": "0.0.0.0",
   "port": 8900,
   "token_env": "CCM_TOKEN",
   "workspace_root": "~/workspace",
-  "data_dir": "~/.ccm-bridge",
   "allowed_paths": ["~/workspace", "~/apps"],
   "allow_manual_cwd": true,
   "ccc_bin": "ccc",
@@ -12,7 +11,7 @@
   "max_prompt_bytes": 102400,
   "max_ws_message_bytes": 262144,
   "max_event_bytes": 524288,
-  "allow_wide_bind": false,
+  "allow_wide_bind": true,
   "allow_hidden_cwd": false,
   "log_level": "info",
   "ccc_timeout_ms": 15000

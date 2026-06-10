@@ -28,7 +28,9 @@ export async function assertAllowedCwd(
   if (!cwdStat.isDirectory()) {
     throw new Error("PATH_NOT_ALLOWED: cwd must be a directory");
   }
-  const realAllowed = await Promise.all(expandedAllowedPaths.map((allowed) => realpath(allowed)));
+  const realAllowed = (await Promise.all(expandedAllowedPaths.map(realDirectoryOrUndefined))).filter(
+    (allowed): allowed is string => typeof allowed === "string"
+  );
   const insideAllowedRoot = realAllowed.some((root) => isPathInside(realCwd, root));
   if (!insideAllowedRoot) {
     throw new Error("PATH_NOT_ALLOWED: cwd is outside allowed_paths");
@@ -43,4 +45,14 @@ export function isPathInside(candidate: string, root: string): boolean {
 
 function hasHiddenPathSegment(candidate: string): boolean {
   return candidate.split(path.sep).some((part) => part.startsWith(".") && part.length > 1);
+}
+
+async function realDirectoryOrUndefined(candidate: string): Promise<string | undefined> {
+  try {
+    const resolved = await realpath(candidate);
+    const info = await stat(resolved);
+    return info.isDirectory() ? resolved : undefined;
+  } catch {
+    return undefined;
+  }
 }

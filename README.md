@@ -29,7 +29,7 @@ npm test
 npm run dev -- --config config.example.json
 ```
 
-The default config creates and exposes app-created workspaces under `~/workspace`. `session.run` accepts either a `workspace_id` from the app workspace picker or an advanced `cwd` value. Advanced `cwd` values are paths on the server machine and must resolve inside `allowed_paths`.
+The default config creates and exposes app-created workspaces under `~/workspace`. It also allows advanced server paths under `~/apps` for sessions that need to work in existing repos. `session.run` accepts either a `workspace_id` from the app workspace picker or an advanced `cwd` value. Advanced `cwd` values are paths on the server machine and must resolve inside `allowed_paths`.
 
 Bridge smoke test against a running local Bridge:
 
@@ -57,8 +57,8 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17 PATH=/opt/homebrew/opt/openjdk@17/bin:$PA
 
 The generated APK is written to `app/build/app/outputs/flutter-apk/app-release.apk`.
 
-The Bridge always enforces `allowed_paths` (defaulting to `workspace_root`) and refuses to run as root. Public deployments should put the Bridge behind WSS, or bind it to a Tailscale IP for private `ws://` access.
-By default new mobile-created sessions use subdirectories under `~/workspace`; advanced users can still enter an absolute server path if it is inside `allowed_paths`.
+The Bridge always enforces `allowed_paths` and refuses to run as root. Public deployments should put the Bridge behind WSS, or bind it to a Tailscale IP for private `ws://` access.
+By default new mobile-created sessions use subdirectories under `~/workspace`; advanced users can still enter an absolute server path under an allowed root such as `~/apps`.
 
 ## MVP Scope
 

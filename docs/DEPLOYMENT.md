@@ -79,7 +79,7 @@ Create `server/config.production.json`:
   "port": 8900,
   "token_env": "CCM_TOKEN",
   "workspace_root": "~/workspace",
-  "allowed_paths": ["~/workspace"],
+  "allowed_paths": ["~/workspace", "~/apps"],
   "allow_manual_cwd": true,
   "ccc_bin": "ccc",
   "poll_interval_ms": 1000,
@@ -123,7 +123,7 @@ Bridge config:
   "port": 8900,
   "token_env": "CCM_TOKEN",
   "workspace_root": "~/workspace",
-  "allowed_paths": ["~/workspace"]
+  "allowed_paths": ["~/workspace", "~/apps"]
 }
 ```
 
@@ -159,7 +159,7 @@ Set Bridge `host` to that IP:
   "port": 8900,
   "token_env": "CCM_TOKEN",
   "workspace_root": "~/workspace",
-  "allowed_paths": ["~/workspace"]
+  "allowed_paths": ["~/workspace", "~/apps"]
 }
 ```
 
@@ -285,7 +285,7 @@ Use the app to verify:
 
 ## 11. Security Notes
 
-- Keep `allowed_paths` narrow. The default `["~/workspace"]` is recommended.
+- Keep `allowed_paths` narrow. The default `["~/workspace", "~/apps"]` supports app-created workspaces and existing repos.
 - App-created workspaces are one-level subdirectories of `workspace_root`.
 - Advanced absolute paths are server-machine paths, not phone paths.
 - Never put `/` in `allowed_paths`.
@@ -305,6 +305,7 @@ Use the app to verify:
 
 - Confirm `workspace_root` is inside `allowed_paths`.
 - Confirm the advanced path is an absolute path on the server.
+- Confirm repo paths under `~/apps` are included in `allowed_paths` when creating sessions for existing repos.
 - Check symlinks do not resolve outside `allowed_paths`.
 
 `CCC_COMMAND_FAILED`:
