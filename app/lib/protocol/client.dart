@@ -116,6 +116,28 @@ class BridgeClient extends ChangeNotifier {
     }
   }
 
+  Future<void> reconnectNow() async {
+    if (!isConfigured ||
+        _state == BridgeConnectionState.connected ||
+        _state == BridgeConnectionState.connecting ||
+        _state == BridgeConnectionState.authenticating) {
+      return;
+    }
+
+    _reconnectAttempt = 0;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    try {
+      await connect();
+    } catch (error) {
+      if (!_closedByUser) {
+        _lastError = error.toString();
+        _scheduleReconnect();
+      }
+      rethrow;
+    }
+  }
+
   Future<void> close() async {
     _closedByUser = true;
     _reconnectTimer?.cancel();
@@ -195,10 +217,30 @@ class BridgeClient extends ChangeNotifier {
   }
 
   Future<void> syncEvents(String sessionId, int afterSeq) async {
-    final data = await request('events.sync', {
-      'session_id': sessionId,
-      'after': afterSeq,
-    });
+    final Map<String, Object?> data;
+    try {
+      data = await request('events.sync', {
+        'session_id': sessionId,
+        'after': afterSeq,
+      });
+    } on BridgeException catch (error) {
+      if (error.code == 'EVENT_GAP') {
+        _events.add(
+          BridgeEventEnvelope(
+            sessionId: sessionId,
+            seq: afterSeq,
+            event: DomainEvent(
+              kind: 'event_gap',
+              payload: {
+                'kind': 'event_gap',
+                'message': error.message,
+              },
+            ),
+          ),
+        );
+      }
+      rethrow;
+    }
     final events = data['events'];
     if (events is List) {
       for (final raw in events.whereType<Map>()) {
@@ -216,6 +258,7 @@ class BridgeClient extends ChangeNotifier {
     SessionBackend backend = SessionBackend.claude,
     String? cwd,
     String? workspaceId,
+    bool skipPermissions = false,
   }) async {
     final hasWorkspaceId = workspaceId != null && workspaceId.isNotEmpty;
     final hasCwd = cwd != null && cwd.isNotEmpty;
@@ -229,6 +272,7 @@ class BridgeClient extends ChangeNotifier {
       'name': name,
       'backend': sessionBackendToWire(backend),
       if (hasWorkspaceId) 'workspace_id': workspaceId else 'cwd': cwd,
+      if (skipPermissions) 'skip_permissions': true,
     };
     final data = await request('session.run', payload);
     return data['session_id'] as String? ?? '';

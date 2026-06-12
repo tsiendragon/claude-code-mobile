@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,6 +8,7 @@ import '../../core/config/server_config_controller.dart';
 import '../../core/utils/format_utils.dart';
 import '../../protocol/client.dart';
 import '../../protocol/models.dart';
+import '../approvals/approval_notification_controller.dart';
 import '../chat/chat_screen.dart';
 import '../server_config/server_config_screen.dart';
 import 'session_controller.dart';
@@ -26,7 +29,12 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _refreshAll();
+      unawaited(
+        context
+            .read<ApprovalNotificationController>()
+            .requestPermissionIfNeeded(),
+      );
+      unawaited(_refreshAll());
     });
   }
 
@@ -243,6 +251,7 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
   bool _showAdvanced = false;
   bool _isLoadingWorkspaces = true;
   bool _isSubmitting = false;
+  bool _skipPermissions = false;
   String? _error;
 
   @override
@@ -317,6 +326,16 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
                   if (text.length > 80) return 'Use 80 characters or fewer.';
                   return null;
                 },
+              ),
+              const SizedBox(height: 4),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Skip permission prompts'),
+                subtitle: const Text('Runs with --dangerously-skip-permissions'),
+                value: _skipPermissions,
+                onChanged: _isSubmitting
+                    ? null
+                    : (value) => setState(() => _skipPermissions = value),
               ),
               if (_error != null) ...[
                 const SizedBox(height: 8),
@@ -576,6 +595,7 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
         backend: _selectedBackend,
         workspaceId: workspaceId,
         cwd: cwd,
+        skipPermissions: _skipPermissions,
       );
       if (!mounted) return;
       if (sessionId == null || sessionId.isEmpty) {

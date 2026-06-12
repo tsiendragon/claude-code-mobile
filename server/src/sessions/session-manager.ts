@@ -1,6 +1,7 @@
 import { randomBytes, createHash } from "node:crypto";
 import { mkdir, open, opendir, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 import type { BridgeConfig } from "../config.js";
 import type { CccClient } from "../ccc/ccc-client.js";
 import type { CccTranscriptItem } from "../ccc/ccc-types.js";
@@ -17,6 +18,7 @@ export type SessionRunInput = {
   backend?: SessionBackend;
   cwd?: string;
   workspaceId?: string;
+  skipPermissions?: boolean;
 };
 
 type ImageUploadState = {
@@ -74,7 +76,7 @@ export class SessionManager {
     const name = normalizeSessionDisplayName(input.name);
     const backend = input.backend ?? "claude";
     const cccName = buildCccName(name);
-    const result = await this.ccc.runSession(cccName, realCwd, backend);
+    const result = await this.ccc.runSession(cccName, realCwd, backend, input.skipPermissions);
     if (!result.ok) {
       const recovered = await this.recoverStartedSession(cccName, realCwd, name, backend);
       if (recovered) return recovered;
@@ -222,7 +224,9 @@ export class SessionManager {
 
     const storedName = buildStoredImageName(upload.name, upload.mime);
     const filePath = path.join(realUploadDir, storedName);
-    await writeFile(filePath, Buffer.concat(buffers));
+    const rawBuffer = Buffer.concat(buffers);
+    const finalBuffer = await resizeImageIfNeeded(rawBuffer, upload.mime);
+    await writeFile(filePath, finalBuffer);
     this.imageUploads.delete(uploadId);
     const info = await stat(filePath);
     return { file: fileMetadata(filePath, session.cwd, info.size) };
@@ -692,6 +696,24 @@ function buildStoredImageName(name: string, mime: string): string {
   const ext = imageExtension(name, mime);
   const base = path.basename(name, path.extname(name)).replace(/[^\w.-]+/g, "-").slice(0, 48) || "image";
   return `${Date.now()}-${randomBytes(4).toString("hex")}-${base}${ext}`;
+}
+
+const MAX_IMAGE_DIMENSION = 1920;
+
+async function resizeImageIfNeeded(buffer: Buffer, mime: string): Promise<Buffer> {
+  const resizableMimes = ["image/jpeg", "image/png", "image/webp"];
+  if (!resizableMimes.includes(mime.toLowerCase())) return buffer;
+  const image = sharp(buffer);
+  const metadata = await image.metadata();
+  const { width = 0, height = 0 } = metadata;
+  if (width <= MAX_IMAGE_DIMENSION && height <= MAX_IMAGE_DIMENSION) return buffer;
+  const resized = image.resize(MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION, { fit: "inside", withoutEnlargement: true });
+  switch (mime.toLowerCase()) {
+    case "image/jpeg": return resized.jpeg({ quality: 85 }).toBuffer();
+    case "image/png":  return resized.png({ compressionLevel: 8 }).toBuffer();
+    case "image/webp": return resized.webp({ quality: 85 }).toBuffer();
+    default:           return resized.toBuffer();
+  }
 }
 
 function imageExtension(name: string, mime: string): string {

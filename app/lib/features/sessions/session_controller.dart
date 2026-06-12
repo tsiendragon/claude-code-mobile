@@ -15,6 +15,12 @@ class SessionController extends ChangeNotifier {
   List<SessionSummary> get sessions => _sessions;
   bool get isLoading => _isLoading;
   String? get error => _error;
+  SessionSummary? sessionById(String sessionId) {
+    for (final session in _sessions) {
+      if (session.sessionId == sessionId) return session;
+    }
+    return null;
+  }
 
   Future<void> load() async {
     _isLoading = true;
@@ -36,6 +42,7 @@ class SessionController extends ChangeNotifier {
     SessionBackend backend = SessionBackend.claude,
     String? cwd,
     String? workspaceId,
+    bool skipPermissions = false,
   }) async {
     try {
       final sessionId = await _client.runSession(
@@ -43,6 +50,7 @@ class SessionController extends ChangeNotifier {
         backend: backend,
         cwd: cwd,
         workspaceId: workspaceId,
+        skipPermissions: skipPermissions,
       );
       await load();
       return sessionId;

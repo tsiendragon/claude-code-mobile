@@ -10,6 +10,7 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        coreLibraryDesugaringEnabled true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -24,6 +25,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        multiDexEnabled true
     }
 
     signingConfigs {
@@ -49,9 +51,16 @@ android {
                 System.getenv("CCM_ANDROID_KEY_PASSWORD")
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.release
+            } else {
+                // Fall back to debug signing so the APK stays installable.
+                signingConfig = signingConfigs.debug
             }
         }
     }
+}
+
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
 }
 
 flutter {

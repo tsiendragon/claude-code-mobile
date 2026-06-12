@@ -536,6 +536,8 @@ class ChatItem {
   final bool failed;
 
   ChatItem copyWith({
+    String? text,
+    bool? snapshot,
     bool? pending,
     bool? failed,
     int? seq,
@@ -543,9 +545,9 @@ class ChatItem {
     return ChatItem(
       id: id,
       role: role,
-      text: text,
+      text: text ?? this.text,
       seq: seq ?? this.seq,
-      snapshot: snapshot,
+      snapshot: snapshot ?? this.snapshot,
       pending: pending ?? this.pending,
       failed: failed ?? this.failed,
     );

@@ -22,6 +22,7 @@ export type SessionRunRequest = RequestEnvelope & {
   backend?: SessionBackend;
   cwd?: string;
   workspace_id?: string;
+  skip_permissions?: boolean;
 };
 
 export type SessionIdRequest = RequestEnvelope & {

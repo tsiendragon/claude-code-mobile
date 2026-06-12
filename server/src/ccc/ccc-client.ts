@@ -14,8 +14,8 @@ export class CccClient {
     return this.run(["ps", "--json"], parseCccSessionList);
   }
 
-  runSession(name: string, cwd: string, backend: SessionBackend): Promise<CccCommandResult<{ name: string }>> {
-    return this.run(this.buildRunSessionArgs(name, cwd, backend), () => ({ name }));
+  runSession(name: string, cwd: string, backend: SessionBackend, skipPermissions?: boolean): Promise<CccCommandResult<{ name: string }>> {
+    return this.run(this.buildRunSessionArgs(name, cwd, backend, skipPermissions), () => ({ name }));
   }
 
   killSession(name: string): Promise<CccCommandResult<{ name: string }>> {
@@ -54,10 +54,11 @@ export class CccClient {
     return { file: this.config.cccBin, args };
   }
 
-  buildRunSessionArgs(name: string, cwd: string, backend: SessionBackend = "claude"): string[] {
+  buildRunSessionArgs(name: string, cwd: string, backend: SessionBackend = "claude", skipPermissions?: boolean): string[] {
     const args = ["run", name, "--cwd", cwd];
     const flag = backendFlag(backend);
     if (flag) args.push(flag);
+    if (skipPermissions) args.push("--dangerously-skip-permissions");
     return args;
   }
 

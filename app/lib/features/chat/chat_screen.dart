@@ -14,6 +14,7 @@ import '../approvals/approval_card.dart';
 
 const _linkChannel = MethodChannel('ccm_mobile/links');
 const _mediaChannel = MethodChannel('ccm_mobile/media');
+const _assistantStreamFrameDelay = Duration(milliseconds: 40);
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.session});
@@ -33,16 +34,20 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatItem> _items = const [];
   List<_PendingImageAttachment> _pendingImages = const [];
   final Set<String> _expandedMessageIds = <String>{};
+  final Map<String, _AssistantMessageAnimation> _assistantAnimations =
+      <String, _AssistantMessageAnimation>{};
   PendingApproval? _pendingApproval;
   bool _isLoading = true;
   bool _isLoadingHistory = false;
   bool _hasMoreHistory = false;
   bool _isSending = false;
   bool _isApproving = false;
+  bool _isRecoveringEventGap = false;
   bool _hasEventGap = false;
   bool _showJumpToBottom = false;
   int? _historyBefore;
   String? _error;
+  String? _eventGapError;
 
   @override
   void initState() {
@@ -57,8 +62,26 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant ChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session.sessionId == widget.session.sessionId) return;
+    _clearAssistantAnimations();
+    _session = widget.session;
+    _items = const [];
+    _pendingApproval = null;
+    _expandedMessageIds.clear();
+    _hasEventGap = false;
+    _showJumpToBottom = false;
+    _historyBefore = null;
+    _hasMoreHistory = false;
+    _isLoading = true;
+    unawaited(_attach());
+  }
+
+  @override
   void dispose() {
     _eventSubscription?.cancel();
+    _clearAssistantAnimations(deferDispose: false);
     _scrollController.removeListener(_handleScroll);
     _messageController.dispose();
     _scrollController.dispose();
@@ -117,9 +140,31 @@ class _ChatScreenState extends State<ChatScreen> {
               Container(
                 width: double.infinity,
                 color: Theme.of(context).colorScheme.errorContainer,
-                padding: const EdgeInsets.all(8),
-                child:
-                    const Text('Event history gap detected. Snapshot shown.'),
+                padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _eventGapError == null
+                            ? 'Could not refresh the latest messages.'
+                            : 'Could not refresh the latest messages: $_eventGapError',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    TextButton.icon(
+                      icon: _isRecoveringEventGap
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh),
+                      label: const Text('Retry'),
+                      onPressed:
+                          _isRecoveringEventGap ? null : _recoverEventGap,
+                    ),
+                  ],
+                ),
               ),
             if (_error != null)
               Container(
@@ -166,10 +211,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                 key: ValueKey(item.id),
                                 sessionId: widget.session.sessionId,
                                 item: item,
+                                animation: _assistantAnimations[item.id],
                                 expanded: _expandedMessageIds.contains(item.id),
                                 onToggleExpanded: () =>
                                     _toggleExpanded(item.id),
                                 onOpenFile: _openFilePreview,
+                                onRetry: item.failed && !_isSending
+                                    ? () => _retryFailedMessage(item)
+                                    : null,
                               );
                             }
 
@@ -269,6 +318,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _attach() async {
+    _clearAssistantAnimations();
     setState(() {
       _isLoading = true;
       _error = null;
@@ -279,15 +329,7 @@ class _ChatScreenState extends State<ChatScreen> {
           .read<BridgeClient>()
           .attachSession(widget.session.sessionId);
       setState(() {
-        _session = snapshot.session;
-        _items = snapshot.items;
-        _hasMoreHistory = snapshot.hasMoreHistory;
-        _historyBefore = snapshot.nextHistoryBefore;
-        _expandedMessageIds
-            .removeWhere((id) => !_items.any((item) => item.id == id));
-        _pendingApproval = snapshot.pendingApproval;
-        _hasEventGap = snapshot.hasEventGap;
-        _showJumpToBottom = false;
+        _applySnapshot(snapshot);
       });
       _scrollToBottom();
     } on BridgeException catch (error) {
@@ -297,6 +339,19 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  void _applySnapshot(ChatStateSnapshot snapshot) {
+    _session = snapshot.session;
+    _items = snapshot.items;
+    _hasMoreHistory = snapshot.hasMoreHistory;
+    _historyBefore = snapshot.nextHistoryBefore;
+    _expandedMessageIds
+        .removeWhere((id) => !_items.any((item) => item.id == id));
+    _pendingApproval = snapshot.pendingApproval;
+    _hasEventGap = false;
+    _eventGapError = null;
+    _showJumpToBottom = false;
   }
 
   Future<void> _send() async {
@@ -311,6 +366,7 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _error = 'Images can only be attached to normal prompts.');
       return;
     }
+    _finishAssistantAnimations();
 
     final clientMessageId =
         'cmsg_${DateTime.now().microsecondsSinceEpoch.toString()}';
@@ -358,14 +414,71 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     } on BridgeException catch (error) {
       _replaceItem(
-          clientMessageId,
-          optimistic.copyWith(
-            pending: false,
-            failed: true,
-          ));
+        clientMessageId,
+        optimistic.copyWith(
+          pending: false,
+          failed: true,
+        ),
+      );
       setState(() {
         _error = error.message;
         _pendingImages = attachments;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isSending = false);
+      }
+    }
+  }
+
+  Future<void> _retryFailedMessage(ChatItem failedItem) async {
+    if (_isSending || !failedItem.failed) return;
+
+    final clientMessageId =
+        'cmsg_${DateTime.now().microsecondsSinceEpoch.toString()}';
+    final retryItem = ChatItem(
+      id: clientMessageId,
+      role: ChatItemRole.user,
+      text: failedItem.text,
+      pending: true,
+    );
+    final failedIndex = _items.indexWhere((item) => item.id == failedItem.id);
+
+    setState(() {
+      _isSending = true;
+      _error = null;
+      if (failedIndex >= 0) {
+        _items = [
+          ..._items.take(failedIndex + 1),
+          retryItem,
+          ..._items.skip(failedIndex + 1),
+        ];
+      } else {
+        _items = [..._items, retryItem];
+      }
+    });
+    _scrollToBottom();
+
+    try {
+      await context.read<BridgeClient>().sendMessage(
+            sessionId: widget.session.sessionId,
+            clientMessageId: clientMessageId,
+            text: failedItem.text,
+          );
+      if (!mounted) return;
+      setState(() {
+        _items = _items
+            .where((item) => item.id != failedItem.id)
+            .map((item) => item.id == clientMessageId
+                ? item.copyWith(pending: false, failed: false)
+                : item)
+            .toList();
+      });
+    } on BridgeException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.message;
+        _items = _items.where((item) => item.id != clientMessageId).toList();
       });
     } finally {
       if (mounted) {
@@ -407,6 +520,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _interrupt() async {
+    _finishAssistantAnimations();
     try {
       await context.read<BridgeClient>().interrupt(widget.session.sessionId);
       setState(() => _pendingApproval = null);
@@ -506,6 +620,11 @@ class _ChatScreenState extends State<ChatScreen> {
     if (envelope.sessionId != widget.session.sessionId || !mounted) return;
 
     final event = envelope.event;
+    if (event.kind == 'event_gap') {
+      unawaited(_recoverEventGap());
+      return;
+    }
+
     final shouldAutoScroll = _isNearBottom();
     setState(() {
       switch (event.kind) {
@@ -525,7 +644,7 @@ class _ChatScreenState extends State<ChatScreen> {
         case 'assistant_message':
           final item = ChatItem.fromAssistantEvent(envelope, event.payload);
           if (item.text.isNotEmpty) {
-            _upsertItem(item);
+            _handleAssistantMessage(item, shouldAutoScroll);
           }
           break;
         case 'user_message':
@@ -575,9 +694,6 @@ class _ChatScreenState extends State<ChatScreen> {
         case 'approval_resolved':
           _pendingApproval = null;
           break;
-        case 'event_gap':
-          _hasEventGap = true;
-          break;
         default:
           break;
       }
@@ -594,6 +710,254 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _items =
           _items.map((item) => item.id == id ? replacement : item).toList();
+    });
+  }
+
+  Future<void> _recoverEventGap() async {
+    if (_isRecoveringEventGap) return;
+
+    final shouldAutoScroll = _isNearBottom();
+    setState(() {
+      _isRecoveringEventGap = true;
+      _hasEventGap = false;
+      _eventGapError = null;
+    });
+
+    try {
+      final snapshot = await context
+          .read<BridgeClient>()
+          .attachSession(widget.session.sessionId);
+      if (!mounted) return;
+      setState(() => _applySnapshot(snapshot));
+      if (shouldAutoScroll) {
+        _scrollToBottom();
+      }
+    } on BridgeException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _hasEventGap = true;
+        _eventGapError = error.message;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isRecoveringEventGap = false);
+      }
+    }
+  }
+
+  void _handleAssistantMessage(ChatItem item, bool shouldAutoScroll) {
+    if (!item.snapshot) {
+      _removeAssistantAnimation(item.id);
+      _upsertItem(item);
+      return;
+    }
+
+    final existingIndex = _assistantSnapshotIndex(item);
+    if (existingIndex < 0) {
+      _items = [..._items, item];
+      _startOrUpdateAssistantAnimation(
+        itemId: item.id,
+        displayedText: '',
+        targetText: item.text,
+        shouldAutoScroll: shouldAutoScroll,
+      );
+      return;
+    }
+
+    final existing = _items[existingIndex];
+    final displayId = existing.id;
+    final displayedText = _displayedAssistantText(existing);
+    final replacement = displayId == item.id
+        ? item
+        : existing.copyWith(
+            text: item.text,
+            seq: item.seq,
+            snapshot: item.snapshot,
+            pending: item.pending,
+            failed: item.failed,
+          );
+
+    if (item.text == displayedText) {
+      _items = _replaceItemAt(existingIndex, replacement);
+      _removeAssistantAnimation(displayId);
+      return;
+    }
+
+    if (item.text.startsWith(displayedText)) {
+      _items = _replaceItemAt(existingIndex, replacement);
+      _startOrUpdateAssistantAnimation(
+        itemId: displayId,
+        displayedText: displayedText,
+        targetText: item.text,
+        shouldAutoScroll: shouldAutoScroll,
+      );
+      return;
+    }
+
+    _removeAssistantAnimation(displayId);
+    if (displayId != item.id) {
+      _expandedMessageIds.remove(displayId);
+    }
+    _items = _replaceItemAt(existingIndex, item);
+  }
+
+  int _assistantSnapshotIndex(ChatItem item) {
+    final existingIndex =
+        _items.indexWhere((existing) => existing.id == item.id);
+    if (existingIndex >= 0) return existingIndex;
+    if (!item.snapshot || _items.isEmpty) return -1;
+
+    final lastIndex = _items.length - 1;
+    final last = _items[lastIndex];
+    if (last.role == ChatItemRole.assistant && last.snapshot) {
+      return lastIndex;
+    }
+    return -1;
+  }
+
+  String _displayedAssistantText(ChatItem item) {
+    return _assistantAnimations[item.id]?.displayedText ?? item.text;
+  }
+
+  List<ChatItem> _replaceItemAt(int index, ChatItem replacement) {
+    final updated = List<ChatItem>.from(_items);
+    updated[index] = replacement;
+    return updated;
+  }
+
+  void _startOrUpdateAssistantAnimation({
+    required String itemId,
+    required String displayedText,
+    required String targetText,
+    required bool shouldAutoScroll,
+  }) {
+    if (displayedText == targetText) {
+      _removeAssistantAnimation(itemId);
+      return;
+    }
+
+    final animation = _assistantAnimations[itemId] ??
+        _AssistantMessageAnimation(
+          displayedText: displayedText,
+          targetText: targetText,
+        );
+    animation.targetText = targetText;
+    _assistantAnimations[itemId] = animation;
+    _expandedMessageIds.add(itemId);
+    _ensureAssistantAnimationTimer(itemId);
+    if (shouldAutoScroll) {
+      _jumpToBottom();
+    }
+  }
+
+  void _ensureAssistantAnimationTimer(String itemId) {
+    final animation = _assistantAnimations[itemId];
+    if (animation == null || animation.timer?.isActive == true) return;
+    animation.timer = Timer.periodic(
+      _assistantStreamFrameDelay,
+      (_) => _tickAssistantAnimation(itemId),
+    );
+  }
+
+  void _tickAssistantAnimation(String itemId) {
+    if (!mounted) return;
+    final animation = _assistantAnimations[itemId];
+    if (animation == null) return;
+
+    final displayedText = animation.displayedText;
+    final targetText = animation.targetText;
+    if (displayedText == targetText) {
+      _completeAssistantAnimation(itemId);
+      return;
+    }
+
+    if (!targetText.startsWith(displayedText)) {
+      animation.showFinal();
+      _completeAssistantAnimation(itemId);
+      return;
+    }
+
+    final shouldAutoScroll = _isNearBottom();
+    final nextEnd = _nextAssistantChunkEnd(targetText, displayedText.length);
+    animation.frame.value = _AssistantMessageFrame(
+      text: targetText.substring(0, nextEnd),
+      isAnimating: true,
+    );
+    if (shouldAutoScroll) {
+      _jumpToBottom();
+    }
+    if (nextEnd >= targetText.length) {
+      _completeAssistantAnimation(itemId);
+    }
+  }
+
+  void _completeAssistantAnimation(String itemId) {
+    final animation = _assistantAnimations.remove(itemId);
+    if (animation == null) return;
+    animation.cancel();
+    animation.showFinal();
+    if (mounted) {
+      setState(() {});
+      _disposeAssistantAnimationAfterFrame(animation);
+    } else {
+      animation.dispose();
+    }
+  }
+
+  bool _finishAssistantAnimations() {
+    if (_assistantAnimations.isEmpty) return false;
+    final animations = _assistantAnimations.values.toList();
+    _assistantAnimations.clear();
+    for (final animation in animations) {
+      animation.cancel();
+      animation.showFinal();
+    }
+    if (mounted) {
+      setState(() {});
+      for (final animation in animations) {
+        _disposeAssistantAnimationAfterFrame(animation);
+      }
+    } else {
+      for (final animation in animations) {
+        animation.dispose();
+      }
+    }
+    return true;
+  }
+
+  void _removeAssistantAnimation(String itemId) {
+    final animation = _assistantAnimations.remove(itemId);
+    if (animation == null) return;
+    animation.cancel();
+    _disposeAssistantAnimationAfterFrame(animation);
+  }
+
+  void _clearAssistantAnimations({bool deferDispose = true}) {
+    if (_assistantAnimations.isEmpty) return;
+    final animations = _assistantAnimations.values.toList();
+    _assistantAnimations.clear();
+    for (final animation in animations) {
+      animation.cancel();
+      if (deferDispose && mounted) {
+        _disposeAssistantAnimationAfterFrame(animation);
+      } else {
+        animation.dispose();
+      }
+    }
+  }
+
+  void _disposeAssistantAnimationAfterFrame(
+    _AssistantMessageAnimation animation,
+  ) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      animation.dispose();
+    });
+  }
+
+  void _jumpToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
     });
   }
 
@@ -679,6 +1043,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _loadEarlierMessages() async {
     if (_isLoadingHistory || !_hasMoreHistory) return;
+    _finishAssistantAnimations();
     final before = _historyBefore;
     if (before == null) {
       setState(() => _hasMoreHistory = false);
@@ -776,6 +1141,97 @@ class _ChatScreenState extends State<ChatScreen> {
         return 'Send prompt';
     }
   }
+}
+
+class _AssistantMessageAnimation {
+  _AssistantMessageAnimation({
+    required String displayedText,
+    required this.targetText,
+  }) : frame = ValueNotifier<_AssistantMessageFrame>(
+          _AssistantMessageFrame(
+            text: displayedText,
+            isAnimating: true,
+          ),
+        );
+
+  final ValueNotifier<_AssistantMessageFrame> frame;
+  String targetText;
+  Timer? timer;
+
+  String get displayedText => frame.value.text;
+
+  void cancel() {
+    timer?.cancel();
+    timer = null;
+  }
+
+  void showFinal() {
+    frame.value = _AssistantMessageFrame(
+      text: targetText,
+      isAnimating: false,
+    );
+  }
+
+  void dispose() {
+    cancel();
+    frame.dispose();
+  }
+}
+
+class _AssistantMessageFrame {
+  const _AssistantMessageFrame({
+    required this.text,
+    required this.isAnimating,
+  });
+
+  final String text;
+  final bool isAnimating;
+}
+
+int _nextAssistantChunkEnd(String text, int start) {
+  final remaining = text.length - start;
+  final chunkUnits = switch (remaining) {
+    > 1600 => 48,
+    > 600 => 28,
+    > 160 => 14,
+    _ => 5,
+  };
+  final softLimit = chunkUnits + 8;
+
+  var end = start;
+  var units = 0;
+  while (end < text.length && units < chunkUnits) {
+    end = _nextRuneOffset(text, end);
+    units++;
+  }
+  while (end < text.length &&
+      units < softLimit &&
+      !_isAssistantChunkBoundary(text.codeUnitAt(end - 1))) {
+    end = _nextRuneOffset(text, end);
+    units++;
+  }
+  return end;
+}
+
+int _nextRuneOffset(String text, int offset) {
+  final codeUnit = text.codeUnitAt(offset);
+  final isHighSurrogate = codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+  if (isHighSurrogate && offset + 1 < text.length) {
+    return offset + 2;
+  }
+  return offset + 1;
+}
+
+bool _isAssistantChunkBoundary(int codeUnit) {
+  return codeUnit == 0x09 ||
+      codeUnit == 0x0a ||
+      codeUnit == 0x20 ||
+      codeUnit == 0x2c ||
+      codeUnit == 0x2e ||
+      codeUnit == 0x3a ||
+      codeUnit == 0x3b ||
+      codeUnit == 0x3002 ||
+      codeUnit == 0xff0c;
 }
 
 class _PendingImageAttachment {
@@ -897,33 +1353,54 @@ class _ChatBubble extends StatelessWidget {
     super.key,
     required this.sessionId,
     required this.item,
+    this.animation,
     required this.expanded,
     required this.onToggleExpanded,
     required this.onOpenFile,
+    this.onRetry,
   });
 
   static const double _collapsedMaxHeight = 280;
 
   final String sessionId;
   final ChatItem item;
+  final _AssistantMessageAnimation? animation;
   final bool expanded;
   final VoidCallback onToggleExpanded;
   final ValueChanged<FileReference> onOpenFile;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
+    final animation = this.animation;
+    if (animation != null) {
+      return ValueListenableBuilder<_AssistantMessageFrame>(
+        valueListenable: animation.frame,
+        builder: (context, frame, _) {
+          return _buildBubble(context, frame);
+        },
+      );
+    }
+    return _buildBubble(context, null);
+  }
+
+  Widget _buildBubble(BuildContext context, _AssistantMessageFrame? frame) {
     final isUser = item.role == ChatItemRole.user;
-    final isCollapsible = _isCollapsible(item.text);
+    final isAnimating = frame?.isAnimating ?? false;
+    final displayText = frame?.text ?? item.text;
+    final isCollapsible = !isAnimating && _isCollapsible(displayText);
     final colorScheme = Theme.of(context).colorScheme;
     final background = isUser
         ? colorScheme.primaryContainer
         : colorScheme.surfaceContainerHigh;
     final alignment = isUser ? Alignment.centerRight : Alignment.centerLeft;
-    final content = _MarkdownMessage(
-      sessionId: sessionId,
-      text: item.text,
-      onOpenFile: onOpenFile,
-    );
+    final content = isAnimating
+        ? _PlainMessage(text: displayText)
+        : _MarkdownMessage(
+            sessionId: sessionId,
+            text: displayText,
+            onOpenFile: onOpenFile,
+          );
 
     return Align(
       alignment: alignment,
@@ -976,6 +1453,20 @@ class _ChatBubble extends StatelessWidget {
                           item.failed ? 'failed' : 'sending',
                           style: Theme.of(context).textTheme.labelSmall,
                         ),
+                        if (item.failed && onRetry != null) ...[
+                          const SizedBox(width: 8),
+                          TextButton.icon(
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              tapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            icon: const Icon(Icons.refresh, size: 16),
+                            label: const Text('Retry'),
+                            onPressed: onRetry,
+                          ),
+                        ],
                       ],
                     ),
                   ],
@@ -992,6 +1483,20 @@ class _ChatBubble extends StatelessWidget {
     return text.length > 800 ||
         '\n'.allMatches(text).length >= 12 ||
         text.contains('```');
+  }
+}
+
+class _PlainMessage extends StatelessWidget {
+  const _PlainMessage({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return SelectableText(
+      text,
+      style: Theme.of(context).textTheme.bodyMedium,
+    );
   }
 }
 
@@ -1854,4 +2359,3 @@ class _CodeBlockBuilder extends MarkdownElementBuilder {
     );
   }
 }
-

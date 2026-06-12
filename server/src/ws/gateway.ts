@@ -155,7 +155,8 @@ export class WsGateway {
             name: String(request.name),
             backend: normalizeBackend(request.backend),
             workspaceId: typeof request.workspace_id === "string" ? request.workspace_id : undefined,
-            cwd: typeof request.cwd === "string" ? request.cwd : undefined
+            cwd: typeof request.cwd === "string" ? request.cwd : undefined,
+            skipPermissions: request.skip_permissions === true
           });
           this.send(socket, ok(request.id, {
             session_id: session.sessionId,
