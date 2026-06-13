@@ -537,6 +537,7 @@ function applyEventToChat(envelope, fromSnapshot) {
 
 function renderMessages() {
   const container = el("messages");
+  const wasAtBottom = container.scrollHeight - container.scrollTop < 120;
   container.innerHTML = "";
   if (state.chat.items.length === 0) {
     container.innerHTML = `<p class="placeholder">No messages yet.</p>`;
@@ -545,7 +546,7 @@ function renderMessages() {
   for (const item of state.chat.items) {
     container.appendChild(renderMessage(item));
   }
-  container.scrollTop = container.scrollHeight;
+  if (wasAtBottom) container.scrollTop = container.scrollHeight;
 }
 
 function renderMessage(item) {
@@ -554,7 +555,7 @@ function renderMessage(item) {
   div.dataset.testid = `msg-${item.role}`;
   if (item.role === "assistant") {
     div.innerHTML = renderMarkdown(item.text);
-    if (item.seq) div.appendChild(buildFeedbackBar(item));
+    if (item.seq != null) div.appendChild(buildFeedbackBar(item));
   } else {
     div.textContent = item.text;
   }
@@ -586,7 +587,7 @@ function buildFeedbackBar(item) {
 }
 
 async function submitFeedback(item, verdict, note) {
-  if (!item.seq) { toast("no message_seq to attach feedback to", true); return; }
+  if (item.seq == null) { toast("no message_seq to attach feedback to", true); return; }
   try {
     await rpc("feedback.submit", {
       session_id: state.active,
@@ -658,18 +659,26 @@ function renderApproval() {
 
 async function sendApproval(approvalId, action, choiceValue) {
   try {
-    const params = {
-      session_id: state.active,
-      approval_id: approvalId,
-      action,
-      idempotency_key: `idem_${approvalId}_${action}_${choiceValue || ""}`
-    };
-    if (choiceValue !== undefined) params.choice = choiceValue;
-    await rpc("message.approve", params);
+    // Choice operations: send the value as a command (same path as Flutter) so
+    // the CCC session actually receives the choice text followed by Enter.
+    if (choiceValue !== undefined) {
+      await rpc("command.send", {
+        session_id: state.active,
+        client_msg_id: genClientMsgId(),
+        command: choiceValue
+      });
+    } else {
+      await rpc("message.approve", {
+        session_id: state.active,
+        approval_id: approvalId,
+        action,
+        idempotency_key: `idem_${approvalId}_${action}`
+      });
+    }
     state.chat.pendingApproval = null;
     renderApproval();
   } catch (error) {
-    toast(`message.approve: ${error.message}`, true);
+    toast(`approve: ${error.message}`, true);
   }
 }
 
@@ -748,11 +757,16 @@ async function loadMoreHistory() {
         seq: item.seq ?? item.message_seq ?? null
       });
     }
+    const container = el("messages");
+    const prevScrollHeight = container.scrollHeight;
+    const prevScrollTop = container.scrollTop;
     state.chat.items = [...older, ...state.chat.items];
     state.chat.hasMore = Boolean(data.has_more);
     state.chat.nextBefore = data.next_before ?? null;
     el("history-bar").hidden = !state.chat.hasMore;
     renderMessages();
+    // Restore reading position: compensate for the height added by prepended items.
+    container.scrollTop = prevScrollTop + (container.scrollHeight - prevScrollHeight);
   } catch (error) {
     toast(`messages.list: ${error.message}`, true);
   }
@@ -888,7 +902,10 @@ function handleEvent(message) {
   // Render into the active chat if it belongs to it.
   if (message.session_id === state.active && state.chat) {
     applyEventToChat(message, false);
-    renderMessages();
+    // approval_requested/resolved only update the approval card (handled inside
+    // applyEventToChat), not the message list — skip the full DOM rebuild.
+    const approvalOnly = kind === "approval_requested" || kind === "approval_resolved";
+    if (!approvalOnly) renderMessages();
   }
 }
 

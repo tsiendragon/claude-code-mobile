@@ -24,10 +24,11 @@ export function parseCccRead(stdout: string): CccReadResult {
   const output = parseReadOutput(parsed);
   const choicePrompt = parseChoicePrompt(parsed.lines, output);
   const rawItems = parseReadItems(parsed.lines);
-  // Discard screen-parsed items that contain no assistant response — they're
-  // likely Claude's startup idle suggestion (❯ Try "fix typecheck errors") and
-  // should not appear as user messages in the transcript.
-  const parsedItems = rawItems.some((i) => i.role === "assistant") ? rawItems : [];
+  // Strip Claude Code startup idle suggestions (❯ Try "fix typecheck errors")
+  // which appear as user-role items when no real conversation has started yet.
+  // We match only these known patterns rather than discarding the entire batch,
+  // so that a user message sent before the first assistant reply is preserved.
+  const parsedItems = rawItems.filter((i) => !isIdleSuggestion(i));
   const items: CccTranscriptItem[] | undefined = parsedItems.length > 0
     ? parsedItems
     : output
@@ -233,6 +234,12 @@ function parsePromptLine(line: string): string | undefined {
   if (!match) return undefined;
   const text = cleanTerminalLine(match[1]).trim();
   return text.length > 0 ? text : undefined;
+}
+
+function isIdleSuggestion(item: CccTranscriptItem): boolean {
+  if (item.role !== "user") return false;
+  // Claude Code startup suggestions: 'Try "fix typecheck errors"', 'Try "explain this"'
+  return /^Try [""“]/u.test(item.text);
 }
 
 function cleanAssistantResponseText(input: string): string {

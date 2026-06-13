@@ -484,7 +484,14 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       setState(() {
         _error = error.message;
-        _items = _items.where((item) => item.id != clientMessageId).toList();
+        // Replace the original failed item with the retry item (also failed),
+        // keeping exactly one bubble in the list rather than leaving two.
+        _items = _items
+            .where((item) => item.id != failedItem.id)
+            .map((item) => item.id == clientMessageId
+                ? item.copyWith(pending: false, failed: true)
+                : item)
+            .toList();
       });
     } finally {
       if (mounted) {
@@ -852,7 +859,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final lastIndex = _items.length - 1;
     final last = _items[lastIndex];
-    if (last.role == ChatItemRole.assistant && last.snapshot) {
+    // Fallback only when the incoming snapshot is a continuation of the last
+    // item's text — prevents a new turn's first snapshot from clobbering a
+    // completed prior-turn message that happened to be stored as snapshot:true.
+    if (last.role == ChatItemRole.assistant &&
+        last.snapshot &&
+        item.text.startsWith(last.text)) {
       return lastIndex;
     }
     return -1;
@@ -1159,7 +1171,9 @@ class _ChatScreenState extends State<ChatScreen> {
       case SessionState.approval:
         return 'Use the approval buttons, or type a reply if the CLI is asking for one.';
       case SessionState.choosing:
-        return 'Type your choice and send it.';
+        return _pendingApproval?.choices.isNotEmpty == true
+            ? 'Tap a choice above, or type a custom reply.'
+            : 'Type your choice and send it.';
       case SessionState.error:
         return 'Session is in error. Refresh or start a new session.';
       case SessionState.ended:

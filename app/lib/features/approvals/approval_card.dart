@@ -21,7 +21,8 @@ class ApprovalCard extends StatefulWidget {
   State<ApprovalCard> createState() => _ApprovalCardState();
 }
 
-class _ApprovalCardState extends State<ApprovalCard> {
+class _ApprovalCardState extends State<ApprovalCard>
+    with WidgetsBindingObserver {
   Timer? _expiryTimer;
   String? _pendingAction;
   DateTime _now = DateTime.now();
@@ -29,8 +30,20 @@ class _ApprovalCardState extends State<ApprovalCard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _restartExpiryTimer();
     _triggerAppearanceHaptic();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _expiryTimer?.cancel();
+      _expiryTimer = null;
+    } else if (state == AppLifecycleState.resumed) {
+      _restartExpiryTimer();
+    }
   }
 
   @override
@@ -55,6 +68,7 @@ class _ApprovalCardState extends State<ApprovalCard> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _expiryTimer?.cancel();
     super.dispose();
   }
