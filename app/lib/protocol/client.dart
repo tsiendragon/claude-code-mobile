@@ -367,6 +367,25 @@ class BridgeClient extends ChangeNotifier {
     await request('message.interrupt', {'session_id': sessionId});
   }
 
+  Future<bool> submitFeedback({
+    required String sessionId,
+    required int messageSeq,
+    String? messageId,
+    required String verdict,
+    String? note,
+    Map<String, Object?>? client,
+  }) async {
+    final data = await request('feedback.submit', {
+      'session_id': sessionId,
+      'message_seq': messageSeq,
+      if (messageId != null) 'message_id': messageId,
+      'verdict': verdict,
+      if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+      if (client != null) 'client': client,
+    });
+    return data['artifacts_missing'] == true;
+  }
+
   Future<FilePreview> readFile({
     required String sessionId,
     required String path,

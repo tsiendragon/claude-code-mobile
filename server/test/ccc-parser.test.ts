@@ -108,6 +108,74 @@ describe("ccc parser", () => {
     expect(read.output).toBe("I don't have access to real-time weather data or your location.");
   });
 
+  it("strips the Claude Code v2 banner when ccc read output is a full screen dump", () => {
+    // Regression: captured as a real badcase. ccc v0.3.0 + Claude Code v2.1.177
+    // returned the entire screen (banner, setup warning, prompt, separators,
+    // status bar) in lastResponse, which leaked into the assistant bubble.
+    const sep = "─".repeat(80);
+    const read = parseCccRead(JSON.stringify({
+      state: "ready",
+      lines: [
+        " ▐▛███▜▌   Claude Code v2.1.177",
+        "▝▜█████▛▘  Opus 4.8 (1M context) · Claude Enterprise",
+        "  ▘▘ ▝▝    ~/workspace/demo",
+        "",
+        " ⚠ 3 setup issues: MCP · /doctor",
+        "",
+        "❯ Do not edit files. Reply with exactly: OK",
+        "",
+        "● OK",
+        "",
+        "✻ Baked for 1s",
+        "",
+        sep,
+        "❯ ",
+        sep,
+        "    [Opus 4.8] ▎░░░░░░░░░ 3% (1M) │ 5h:10% (4.4h)            ● high · /effort",
+        "  ← for agents"
+      ],
+      lastResponse: [
+        "▐▛███▜▌   Claude Code v2.1.177",
+        "▝▜█████▛▘  Opus 4.8 (1M context) · Claude Enterprise",
+        "  ▘▘ ▝▝    ~/workspace/demo",
+        " ⚠ 3 setup issues: MCP · /doctor",
+        "❯ Do not edit files. Reply with exactly: OK",
+        "● OK",
+        "✻ Baked for 1s",
+        sep,
+        "❯ ",
+        sep,
+        "    [Opus 4.8] ▎░░░░░░░░░ 3% (1M) │ 5h:10% (4.4h)            ● high · /effort",
+        "  ← for agents"
+      ].join("\n")
+    }));
+
+    expect(read.output).toBe("OK");
+    expect(read.items).toEqual([
+      { id: "hist_1", role: "user", text: "Do not edit files. Reply with exactly: OK" },
+      { id: "hist_2", role: "assistant", text: "OK" }
+    ]);
+  });
+
+  it("drops a banner-only welcome screen instead of rendering it as a response", () => {
+    const read = parseCccRead(JSON.stringify({
+      state: "ready",
+      lines: [
+        " ▐▛███▜▌   Claude Code v2.1.177",
+        "▝▜█████▛▘  Opus 4.8 (1M context) · Claude Enterprise",
+        "  ▘▘ ▝▝    ~/workspace/demo"
+      ],
+      lastResponse: [
+        "▐▛███▜▌   Claude Code v2.1.177",
+        "▝▜█████▛▘  Opus 4.8 (1M context) · Claude Enterprise",
+        "  ▘▘ ▝▝    ~/workspace/demo"
+      ].join("\n")
+    }));
+
+    expect(read.output).toBeUndefined();
+    expect(read.items).toBeUndefined();
+  });
+
   it("parses ccc history json lines", () => {
     const items = parseCccHistory([
       JSON.stringify({

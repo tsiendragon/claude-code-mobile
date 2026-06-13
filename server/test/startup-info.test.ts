@@ -23,6 +23,7 @@ function config(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
     allowHiddenCwd: false,
     logLevel: "info",
     cccTimeoutMs: 15000,
+    webUiEnabled: false,
     ...overrides
   };
 }

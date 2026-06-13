@@ -10,6 +10,7 @@ import { StatePoller } from "./sessions/state-poller.js";
 import { TranscriptStore } from "./sessions/transcript-store.js";
 import { WorkspaceService } from "./workspaces/workspace-service.js";
 import { buildStartupInfo } from "./startup-info.js";
+import { createStaticHandler, resolveWebRoot } from "./web/static-server.js";
 
 const configPath = parseConfigPath(process.argv.slice(2));
 const config = await loadConfig(configPath);
@@ -21,12 +22,30 @@ if (config.host === "0.0.0.0") {
   });
 }
 
+const webRoot = config.webUiEnabled ? resolveWebRoot(config.webUiDir) : undefined;
+const serveWebUi = webRoot ? createStaticHandler(webRoot, logger) : undefined;
+if (config.webUiEnabled && !webRoot) {
+  logger.warn("web_ui_dir_missing", {
+    message: "Web UI enabled but public directory was not found; serving 404 for HTTP requests"
+  });
+} else if (webRoot) {
+  logger.info("web_ui_enabled", { web_root: webRoot });
+}
+
 const httpServer = http.createServer((request, response) => {
   logger.info("http_request", {
     method: request.method,
     url: request.url,
     remote_address: request.socket.remoteAddress ?? "unknown"
   });
+  if (serveWebUi) {
+    serveWebUi(request, response).catch((error) => {
+      logger.warn("web_ui_error", { message: error instanceof Error ? error.message : String(error) });
+      if (!response.headersSent) response.writeHead(500);
+      response.end();
+    });
+    return;
+  }
   response.writeHead(404);
   response.end("Not Found");
 });

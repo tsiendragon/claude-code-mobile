@@ -124,6 +124,38 @@ describe("protocol validators", () => {
     }, 1000).ok).toBe(true);
   });
 
+  it("accepts feedback.submit with a valid verdict", () => {
+    expect(validateRequest({
+      type: "feedback.submit",
+      id: "req_1",
+      session_id: "sess_abcdefgh",
+      message_seq: 4,
+      message_id: "msg_4",
+      verdict: "format_error",
+      note: "role was wrong"
+    }, 1000).ok).toBe(true);
+  });
+
+  it("rejects feedback.submit with an unknown verdict", () => {
+    expect(validateRequest({
+      type: "feedback.submit",
+      id: "req_1",
+      session_id: "sess_abcdefgh",
+      message_seq: 4,
+      verdict: "totally_broken"
+    }, 1000)).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
+  });
+
+  it("rejects feedback.submit with a non-positive message_seq", () => {
+    expect(validateRequest({
+      type: "feedback.submit",
+      id: "req_1",
+      session_id: "sess_abcdefgh",
+      message_seq: 0,
+      verdict: "format_error"
+    }, 1000)).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
+  });
+
   it("accepts paginated message history requests", () => {
     expect(validateRequest({
       type: "messages.list",

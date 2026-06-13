@@ -24,6 +24,8 @@ export type BridgeConfig = {
   allowHiddenCwd: boolean;
   logLevel: LogLevel;
   cccTimeoutMs: number;
+  webUiEnabled: boolean;
+  webUiDir?: string;
 };
 
 type RawConfig = {
@@ -45,6 +47,8 @@ type RawConfig = {
   allow_hidden_cwd?: boolean;
   log_level?: LogLevel;
   ccc_timeout_ms?: number;
+  web_ui_enabled?: boolean;
+  web_ui_dir?: string;
 };
 
 export async function loadConfig(configPath?: string): Promise<BridgeConfig> {
@@ -79,7 +83,9 @@ export async function loadConfig(configPath?: string): Promise<BridgeConfig> {
     allowWideBind: raw.allow_wide_bind ?? false,
     allowHiddenCwd: raw.allow_hidden_cwd ?? false,
     logLevel: raw.log_level ?? "info",
-    cccTimeoutMs: raw.ccc_timeout_ms ?? 15000
+    cccTimeoutMs: raw.ccc_timeout_ms ?? 15000,
+    webUiEnabled: raw.web_ui_enabled ?? envFlag("CCM_WEB_UI", true),
+    webUiDir: raw.web_ui_dir ? expandHome(raw.web_ui_dir) : process.env.CCM_WEB_UI_DIR ? expandHome(process.env.CCM_WEB_UI_DIR) : undefined
   };
 
   validateConfig(config);
@@ -124,6 +130,12 @@ function validateConfig(config: BridgeConfig) {
 async function readJsonConfig(configPath: string): Promise<RawConfig> {
   const body = await readFile(configPath, "utf8");
   return JSON.parse(body) as RawConfig;
+}
+
+function envFlag(name: string, fallback: boolean): boolean {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  return value !== "0" && value.toLowerCase() !== "false";
 }
 
 function numberFromEnv(name: string, fallback: number): number {

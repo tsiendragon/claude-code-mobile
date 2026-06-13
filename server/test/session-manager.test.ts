@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -28,7 +28,8 @@ function config(root: string): BridgeConfig {
     allowWideBind: false,
     allowHiddenCwd: false,
     logLevel: "info",
-    cccTimeoutMs: 15000
+    cccTimeoutMs: 15000,
+    webUiEnabled: false
   };
 }
 
@@ -358,5 +359,69 @@ describe("SessionManager", () => {
       next_before: 2
     });
     expect(page.items.map((item) => item.text)).toEqual(["first response", "second prompt"]);
+  });
+
+  it("captures badcase artifacts on snapshot and attaches them to feedback", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const workspaces = new WorkspaceService(cfg);
+    await workspaces.create("demo-app");
+    const rawStdout = JSON.stringify({ output: "buggy response", lines: ["● buggy response"] });
+    const ccc = {
+      runSession: async (name: string) =>
+        ({ ok: true, stdout: "", stderr: "", data: { name } } as const),
+      read: async () =>
+        ({
+          ok: true,
+          stdout: rawStdout,
+          stderr: "",
+          data: { state: "ready", output: "buggy response" }
+        } as const)
+    } as unknown as CccClient;
+
+    const manager = new SessionManager(cfg, ccc, workspaces, new InMemoryEventStore(20));
+    const session = await manager.run({ name: "Demo", workspaceId: "demo-app" });
+    await manager.applySnapshot(session.sessionId);
+
+    const result = await manager.submitFeedback(session.sessionId, {
+      messageSeq: 1,
+      messageId: "msg_1",
+      verdict: "format_error",
+      note: "chrome leaked into the bubble"
+    });
+    expect(result.artifacts_missing).toBe(false);
+    expect(result.feedback_id).toMatch(/^fb_/);
+
+    const dir = path.join(cfg.dataDir, "feedback");
+    const files = await readdir(dir);
+    expect(files).toHaveLength(1);
+    const body = await readFile(path.join(dir, files[0]), "utf8");
+    const saved = JSON.parse(body.trim());
+    expect(saved.verdict).toBe("format_error");
+    expect(saved.message_seq).toBe(1);
+    expect(saved.artifacts.raw_stdout).toBe(rawStdout);
+    expect(saved.artifacts.render_text).toBe("buggy response");
+  });
+
+  it("marks feedback as artifacts_missing when the snapshot was never archived", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const workspaces = new WorkspaceService(cfg);
+    await workspaces.create("demo-app");
+    const ccc = {
+      runSession: async (name: string) =>
+        ({ ok: true, stdout: "", stderr: "", data: { name } } as const),
+      read: async () =>
+        ({ ok: true, stdout: "", stderr: "", data: { state: "ready" } } as const)
+    } as unknown as CccClient;
+
+    const manager = new SessionManager(cfg, ccc, workspaces, new InMemoryEventStore(20));
+    const session = await manager.run({ name: "Demo", workspaceId: "demo-app" });
+
+    const result = await manager.submitFeedback(session.sessionId, {
+      messageSeq: 999,
+      verdict: "other"
+    });
+    expect(result.artifacts_missing).toBe(true);
   });
 });

@@ -1,4 +1,7 @@
-import { PROTOCOL_VERSION, type RequestEnvelope } from "../types/protocol.js";
+import { FEEDBACK_VERDICTS, PROTOCOL_VERSION, type RequestEnvelope } from "../types/protocol.js";
+
+const feedbackVerdicts = new Set<string>(FEEDBACK_VERDICTS);
+const MAX_FEEDBACK_NOTE_BYTES = 4096;
 
 const requestTypes = new Set([
   "auth",
@@ -21,6 +24,7 @@ const requestTypes = new Set([
   "file.list",
   "file.resolve",
   "file.read",
+  "feedback.submit",
   "events.sync"
 ]);
 
@@ -139,6 +143,27 @@ export function validateRequest(input: unknown, maxPromptBytes: number): Validat
     }
   }
 
+  if (input.type === "feedback.submit") {
+    if (!Number.isInteger(input.message_seq) || Number(input.message_seq) < 1) {
+      return invalid("message_seq must be a positive integer");
+    }
+    if (typeof input.verdict !== "string" || !feedbackVerdicts.has(input.verdict)) {
+      return invalid("valid verdict is required");
+    }
+    if (input.message_id !== undefined && typeof input.message_id !== "string") {
+      return invalid("message_id must be a string");
+    }
+    if (input.note !== undefined) {
+      if (typeof input.note !== "string") return invalid("note must be a string");
+      if (Buffer.byteLength(input.note, "utf8") > MAX_FEEDBACK_NOTE_BYTES) {
+        return invalid("note exceeds maximum length");
+      }
+    }
+    if (input.client !== undefined && !isObject(input.client)) {
+      return invalid("client must be an object");
+    }
+  }
+
   if (input.type === "messages.list") {
     if (input.before !== undefined && (!Number.isInteger(input.before) || Number(input.before) < 1)) {
       return invalid("before must be a positive integer");
@@ -174,6 +199,7 @@ function requiresSession(type: string): boolean {
     "file.list",
     "file.resolve",
     "file.read",
+    "feedback.submit",
     "events.sync"
   ].includes(type);
 }

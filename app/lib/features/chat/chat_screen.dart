@@ -219,6 +219,12 @@ class _ChatScreenState extends State<ChatScreen> {
                                 onRetry: item.failed && !_isSending
                                     ? () => _retryFailedMessage(item)
                                     : null,
+                                onFeedback: item.role ==
+                                            ChatItemRole.assistant &&
+                                        item.seq != null &&
+                                        !item.pending
+                                    ? () => _showFeedbackSheet(item)
+                                    : null,
                               );
                             }
 
@@ -526,6 +532,43 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _pendingApproval = null);
     } on BridgeException catch (error) {
       setState(() => _error = error.message);
+    }
+  }
+
+  Future<void> _showFeedbackSheet(ChatItem item) async {
+    final seq = item.seq;
+    if (seq == null) return;
+    final result = await showModalBottomSheet<_FeedbackResult>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _FeedbackSheet(),
+    );
+    if (result == null || !mounted) return;
+    try {
+      final artifactsMissing =
+          await context.read<BridgeClient>().submitFeedback(
+                sessionId: widget.session.sessionId,
+                messageSeq: seq,
+                messageId: item.id,
+                verdict: result.verdict,
+                note: result.note,
+              );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            artifactsMissing
+                ? 'Thanks — feedback saved (original output no longer cached).'
+                : 'Thanks — feedback saved.',
+          ),
+        ),
+      );
+    } on BridgeException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Feedback failed: ${error.message}')),
+      );
     }
   }
 
@@ -1358,6 +1401,7 @@ class _ChatBubble extends StatelessWidget {
     required this.onToggleExpanded,
     required this.onOpenFile,
     this.onRetry,
+    this.onFeedback,
   });
 
   static const double _collapsedMaxHeight = 280;
@@ -1369,6 +1413,7 @@ class _ChatBubble extends StatelessWidget {
   final VoidCallback onToggleExpanded;
   final ValueChanged<FileReference> onOpenFile;
   final VoidCallback? onRetry;
+  final VoidCallback? onFeedback;
 
   @override
   Widget build(BuildContext context) {
@@ -1439,6 +1484,24 @@ class _ChatBubble extends StatelessWidget {
                       onPressed: onToggleExpanded,
                     ),
                   ],
+                  if (onFeedback != null) ...[
+                    const SizedBox(height: 2),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          foregroundColor: colorScheme.onSurfaceVariant,
+                          textStyle: Theme.of(context).textTheme.labelSmall,
+                        ),
+                        icon: const Icon(Icons.flag_outlined, size: 14),
+                        label: const Text('Report format issue'),
+                        onPressed: onFeedback,
+                      ),
+                    ),
+                  ],
                   if (item.pending || item.failed) ...[
                     const SizedBox(height: 6),
                     Row(
@@ -1483,6 +1546,107 @@ class _ChatBubble extends StatelessWidget {
     return text.length > 800 ||
         '\n'.allMatches(text).length >= 12 ||
         text.contains('```');
+  }
+}
+
+class _FeedbackResult {
+  const _FeedbackResult({required this.verdict, this.note});
+
+  final String verdict;
+  final String? note;
+}
+
+const List<({String value, String label})> _feedbackVerdicts = [
+  (value: 'format_error', label: 'Formatting is wrong'),
+  (value: 'wrong_role', label: 'Wrong sender (user/assistant mixed up)'),
+  (value: 'missing_content', label: 'Content missing or cut off'),
+  (value: 'garbled', label: 'Garbled / encoding issue'),
+  (value: 'choice_misparse', label: 'Options not detected'),
+  (value: 'render_issue', label: 'Markdown renders wrong'),
+  (value: 'good', label: 'Parsed well (good example)'),
+  (value: 'other', label: 'Other'),
+];
+
+class _FeedbackSheet extends StatefulWidget {
+  @override
+  State<_FeedbackSheet> createState() => _FeedbackSheetState();
+}
+
+class _FeedbackSheetState extends State<_FeedbackSheet> {
+  String? _verdict;
+  final _noteController = TextEditingController();
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        16,
+        4,
+        16,
+        16 + MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Report this message', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text(
+              'Tell us what looks wrong. We save the raw output to fix parsing.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final verdict in _feedbackVerdicts)
+                  ChoiceChip(
+                    label: Text(verdict.label),
+                    selected: _verdict == verdict.value,
+                    onSelected: (_) =>
+                        setState(() => _verdict = verdict.value),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _noteController,
+              maxLines: 3,
+              maxLength: 1000,
+              decoration: const InputDecoration(
+                labelText: 'Note (optional)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(
+                onPressed: _verdict == null
+                    ? null
+                    : () => Navigator.of(context).pop(
+                          _FeedbackResult(
+                            verdict: _verdict!,
+                            note: _noteController.text,
+                          ),
+                        ),
+                child: const Text('Submit'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

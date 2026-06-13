@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ccm Bridge — Web Console</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">ccm</span>
+      <span class="subtitle">Bridge Web Console</span>
+    </div>
+    <div class="conn">
+      <span id="conn-dot" class="dot dot-off" data-testid="conn-dot"></span>
+      <span id="conn-text" data-testid="conn-text">disconnected</span>
+      <button id="btn-disconnect" class="btn btn-ghost" hidden data-testid="btn-disconnect">Disconnect</button>
+    </div>
+  </header>
+
+  <!-- Connection / auth panel -->
+  <section id="auth-panel" class="panel" data-testid="auth-panel">
+    <h2>Connect</h2>
+    <form id="auth-form" class="form-grid" data-testid="auth-form">
+      <label>Server URL
+        <input id="ws-url" type="text" autocomplete="off" spellcheck="false" data-testid="ws-url" />
+      </label>
+      <label>Token
+        <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="CCM_TOKEN" data-testid="token" />
+      </label>
+      <label class="checkbox">
+        <input id="remember" type="checkbox" data-testid="remember" /> Remember token in this browser
+      </label>
+      <button type="submit" class="btn btn-primary" data-testid="btn-connect">Connect</button>
+    </form>
+    <p id="auth-error" class="error" data-testid="auth-error" hidden></p>
+  </section>
+
+  <!-- Main workspace -->
+  <main id="workspace" class="workspace" hidden data-testid="workspace">
+    <!-- Left column: sessions -->
+    <aside class="col col-sessions">
+      <div class="col-head">
+        <h2>Sessions</h2>
+        <button id="btn-refresh-sessions" class="btn btn-ghost" title="Refresh" data-testid="btn-refresh-sessions">↻</button>
+      </div>
+
+      <details class="create-box" data-testid="create-session-box">
+        <summary>New session</summary>
+        <form id="run-form" class="form-grid" data-testid="run-form">
+          <label>Name
+            <input id="run-name" type="text" placeholder="my task" data-testid="run-name" />
+          </label>
+          <label>Backend
+            <select id="run-backend" data-testid="run-backend">
+              <option value="claude">Claude Code</option>
+              <option value="codex">Codex</option>
+              <option value="opencode">Opencode</option>
+              <option value="cursor">Cursor</option>
+            </select>
+          </label>
+          <label>Target
+            <select id="run-target" data-testid="run-target">
+              <option value="workspace">Workspace</option>
+              <option value="cwd">Manual cwd</option>
+            </select>
+          </label>
+          <label id="workspace-field">Workspace
+            <span class="inline">
+              <select id="run-workspace" data-testid="run-workspace"></select>
+              <button type="button" id="btn-new-workspace" class="btn btn-ghost" title="Create workspace">+</button>
+            </span>
+          </label>
+          <label id="cwd-field" hidden>cwd (server path)
+            <input id="run-cwd" type="text" placeholder="~/apps/repo" data-testid="run-cwd" />
+          </label>
+          <label class="checkbox">
+            <input id="run-skip" type="checkbox" data-testid="run-skip" /> skip permissions
+          </label>
+          <button type="submit" class="btn btn-primary" data-testid="btn-run">Run</button>
+        </form>
+      </details>
+
+      <ul id="session-list" class="session-list" data-testid="session-list"></ul>
+    </aside>
+
+    <!-- Center column: chat -->
+    <section class="col col-chat">
+      <div class="chat-head">
+        <div>
+          <h2 id="chat-title" data-testid="chat-title">No session</h2>
+          <span id="chat-meta" class="muted" data-testid="chat-meta"></span>
+        </div>
+        <div class="chat-actions">
+          <span id="state-badge" class="badge" data-testid="state-badge"></span>
+          <button id="btn-interrupt" class="btn btn-ghost" disabled data-testid="btn-interrupt">Interrupt</button>
+          <button id="btn-kill" class="btn btn-danger" disabled data-testid="btn-kill">Kill</button>
+        </div>
+      </div>
+
+      <div id="history-bar" class="history-bar" hidden>
+        <button id="btn-load-more" class="btn btn-ghost" data-testid="btn-load-more">Load older messages</button>
+      </div>
+
+      <div id="messages" class="messages" data-testid="messages">
+        <p class="placeholder">Select or create a session to start.</p>
+      </div>
+
+      <div id="approval-area" class="approval-area" data-testid="approval-area"></div>
+
+      <form id="send-form" class="send-form" data-testid="send-form">
+        <textarea id="prompt" rows="2" placeholder="Type a message, or /command" disabled data-testid="prompt"></textarea>
+        <div class="send-controls">
+          <input type="file" id="image-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="image-input" />
+          <button type="button" id="btn-attach" class="btn btn-ghost" disabled title="Attach image" data-testid="btn-attach">📎</button>
+          <button type="submit" id="btn-send" class="btn btn-primary" disabled data-testid="btn-send">Send</button>
+        </div>
+        <div id="attach-preview" class="attach-preview" hidden data-testid="attach-preview"></div>
+      </form>
+    </section>
+
+    <!-- Right column: tools -->
+    <aside class="col col-tools">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="files" data-testid="tab-files">Files</button>
+        <button class="tab" data-tab="stats" data-testid="tab-stats">Stats</button>
+        <button class="tab" data-tab="log" data-testid="tab-log">Event Log</button>
+      </div>
+
+      <div class="tab-panel" data-panel="files" data-testid="panel-files">
+        <div class="col-head">
+          <h3>Files</h3>
+          <button id="btn-refresh-files" class="btn btn-ghost" title="Refresh" data-testid="btn-refresh-files">↻</button>
+        </div>
+        <ul id="file-list" class="file-list" data-testid="file-list"></ul>
+        <pre id="file-view" class="file-view" data-testid="file-view" hidden></pre>
+      </div>
+
+      <div class="tab-panel" data-panel="stats" hidden data-testid="panel-stats">
+        <div class="col-head">
+          <h3>System</h3>
+          <button id="btn-refresh-stats" class="btn btn-ghost" title="Refresh" data-testid="btn-refresh-stats">↻</button>
+        </div>
+        <pre id="stats-view" class="stats-view" data-testid="stats-view">—</pre>
+      </div>
+
+      <div class="tab-panel" data-panel="log" hidden data-testid="panel-log">
+        <div class="col-head">
+          <h3>Event / RPC Log</h3>
+          <button id="btn-clear-log" class="btn btn-ghost" data-testid="btn-clear-log">Clear</button>
+        </div>
+        <div id="event-log" class="event-log" data-testid="event-log"></div>
+      </div>
+    </aside>
+  </main>
+
+  <div id="toast" class="toast" hidden data-testid="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

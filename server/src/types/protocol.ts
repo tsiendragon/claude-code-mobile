@@ -82,6 +82,28 @@ export type ImageUploadFinishRequest = SessionIdRequest & {
   upload_id: string;
 };
 
+export const FEEDBACK_VERDICTS = [
+  "format_error",
+  "wrong_role",
+  "missing_content",
+  "garbled",
+  "choice_misparse",
+  "render_issue",
+  "other",
+  "good"
+] as const;
+
+export type FeedbackVerdict = (typeof FEEDBACK_VERDICTS)[number];
+
+export type FeedbackSubmitRequest = SessionIdRequest & {
+  type: "feedback.submit";
+  message_seq: number;
+  message_id?: string;
+  verdict: FeedbackVerdict;
+  note?: string;
+  client?: { app_version?: string; platform?: string };
+};
+
 export type SupportedRequest =
   | AuthRequest
   | RequestEnvelope
@@ -95,6 +117,7 @@ export type SupportedRequest =
   | ImageUploadFinishRequest
   | FileListRequest
   | FileReadRequest
+  | FeedbackSubmitRequest
   | EventsSyncRequest;
 
 export type ResponseEnvelope =

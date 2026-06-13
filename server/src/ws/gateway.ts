@@ -5,7 +5,7 @@ import type { Logger } from "../logger.js";
 import { TokenBucketRateLimiter } from "../security/rate-limit.js";
 import { readSystemStats } from "../system/stats.js";
 import type { ApprovalAction, SessionBackend } from "../types/domain.js";
-import type { RequestEnvelope } from "../types/protocol.js";
+import type { FeedbackVerdict, RequestEnvelope } from "../types/protocol.js";
 import { AuthService } from "./auth.js";
 import { err, ok, safeJsonParse } from "./protocol.js";
 import { validateRequest } from "./validators.js";
@@ -246,6 +246,18 @@ export class WsGateway {
             String(request.path)
           )));
           break;
+        case "feedback.submit":
+          this.send(socket, ok(request.id, await this.sessions.submitFeedback(
+            String(request.session_id),
+            {
+              messageSeq: Number(request.message_seq),
+              messageId: typeof request.message_id === "string" ? request.message_id : undefined,
+              verdict: request.verdict as FeedbackVerdict,
+              note: typeof request.note === "string" ? request.note : undefined,
+              client: isClientMeta(request.client) ? request.client : undefined
+            }
+          )));
+          break;
         case "events.sync": {
           const after = Number(request.after ?? request.after_seq);
           const events = this.sessions.syncEvents(String(request.session_id), after);
@@ -278,6 +290,10 @@ export class WsGateway {
 function normalizeBackend(value: unknown): SessionBackend {
   if (value === "codex" || value === "opencode" || value === "cursor") return value;
   return "claude";
+}
+
+function isClientMeta(value: unknown): value is { app_version?: string; platform?: string } {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function normalizeErrorCode(message: string): string {

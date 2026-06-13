@@ -24,3 +24,8 @@ build/
 
 .claude/worktrees/
 cmdtools.zip
+
+# Bridge runtime data (transcripts + badcase feedback may contain sensitive output)
+.ccm-bridge/
+**/feedback/
+**/transcripts/

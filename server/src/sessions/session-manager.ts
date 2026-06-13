@@ -4,14 +4,16 @@ import path from "node:path";
 import sharp from "sharp";
 import type { BridgeConfig } from "../config.js";
 import type { CccClient } from "../ccc/ccc-client.js";
-import type { CccTranscriptItem } from "../ccc/ccc-types.js";
+import type { CccReadResult, CccTranscriptItem } from "../ccc/ccc-types.js";
 import { assertAllowedCwd, isPathInside } from "../security/paths.js";
 import type { ApprovalAction, ApprovalRecord, SessionBackend, SessionRecord, SessionState } from "../types/domain.js";
-import type { SessionSummary } from "../types/protocol.js";
+import type { FeedbackVerdict, SessionSummary } from "../types/protocol.js";
 import type { WorkspaceService } from "../workspaces/workspace-service.js";
 import { InMemoryEventStore } from "./event-store.js";
 import { canPerform, transitionState } from "./state-machine.js";
 import { TranscriptStore, type TranscriptInput } from "./transcript-store.js";
+import { SnapshotArchive } from "./snapshot-archive.js";
+import { FeedbackStore, artifactsFromSnapshot, type FeedbackRecord } from "./feedback-store.js";
 
 export type SessionRunInput = {
   name: string;
@@ -19,6 +21,14 @@ export type SessionRunInput = {
   cwd?: string;
   workspaceId?: string;
   skipPermissions?: boolean;
+};
+
+export type FeedbackInput = {
+  messageSeq: number;
+  messageId?: string;
+  verdict: FeedbackVerdict;
+  note?: string;
+  client?: { app_version?: string; platform?: string };
 };
 
 type ImageUploadState = {
@@ -43,7 +53,9 @@ export class SessionManager {
     private readonly ccc: CccClient,
     private readonly workspaces: WorkspaceService,
     private readonly events: InMemoryEventStore,
-    private readonly transcripts: TranscriptStore = new TranscriptStore(config.dataDir)
+    private readonly transcripts: TranscriptStore = new TranscriptStore(config.dataDir),
+    private readonly snapshots: SnapshotArchive = new SnapshotArchive(),
+    private readonly feedback: FeedbackStore = new FeedbackStore(config.dataDir)
   ) {}
 
   setPoller(poller: { start(sessionId: string): void; stop(sessionId: string): void }) {
@@ -356,6 +368,7 @@ export class SessionManager {
           source: "event"
         });
         if (persisted.created) {
+          this.recordSnapshotArtifact(session, persisted.message.message_seq, result.stdout, result.data, result.data.output);
           this.append(session, {
             kind: "assistant_message",
             messageId: persisted.message.id,
@@ -375,6 +388,62 @@ export class SessionManager {
       session.pendingApproval = undefined;
     }
     return session;
+  }
+
+  private recordSnapshotArtifact(
+    session: SessionRecord,
+    messageSeq: number,
+    rawStdout: string,
+    parsed: CccReadResult,
+    renderText: string
+  ): void {
+    // Badcase capture is best-effort and must never break the snapshot flow.
+    try {
+      this.snapshots.record(session.cccName, messageSeq, {
+        capturedAt: new Date().toISOString(),
+        rawStdout,
+        parsed,
+        renderText
+      });
+    } catch {
+      // ignore archive failures
+    }
+  }
+
+  async submitFeedback(sessionId: string, input: FeedbackInput): Promise<{ feedback_id: string; artifacts_missing: boolean }> {
+    const session = this.requireSession(sessionId);
+    const snapshot = this.snapshots.get(session.cccName, input.messageSeq);
+    const fallbackRenderText = snapshot ? undefined : await this.lookupRenderText(session, input.messageSeq);
+    const record: FeedbackRecord = {
+      feedback_id: `fb_${randomBytes(10).toString("base64url")}`,
+      created_at: new Date().toISOString(),
+      session_id: session.sessionId,
+      ccc_name: session.cccName,
+      backend: session.backend,
+      message_seq: input.messageSeq,
+      ...(input.messageId === undefined ? {} : { message_id: input.messageId }),
+      verdict: input.verdict,
+      ...(input.note === undefined ? {} : { note: input.note }),
+      artifacts_missing: snapshot === undefined,
+      ...(snapshot
+        ? { artifacts: artifactsFromSnapshot(snapshot) }
+        : fallbackRenderText !== undefined
+          ? { artifacts: { captured_at: "", raw_stdout: "", parsed: null, render_text: fallbackRenderText } }
+          : {}),
+      ...(input.client === undefined ? {} : { client: input.client })
+    };
+    await this.feedback.append(session.cccName, record);
+    return { feedback_id: record.feedback_id, artifacts_missing: record.artifacts_missing };
+  }
+
+  private async lookupRenderText(session: SessionRecord, messageSeq: number): Promise<string | undefined> {
+    try {
+      const page = await this.transcripts.list(session.cccName, { before: messageSeq + 1, limit: 1 });
+      const tail = page.items.at(-1);
+      return tail?.message_seq === messageSeq ? tail.text : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   requireSession(sessionId: string): SessionRecord {

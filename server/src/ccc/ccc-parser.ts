@@ -73,16 +73,32 @@ function isControlKeyHistoryEntry(content: string): boolean {
 }
 
 function parseReadOutput(parsed: Record<string, unknown>): string | undefined {
-  if (typeof parsed.output === "string" && parsed.output.length > 0) {
-    return cleanOptionalAssistantResponseText(parsed.output);
-  }
-  if (typeof parsed.lastResponse === "string" && parsed.lastResponse.length > 0) {
-    return cleanOptionalAssistantResponseText(parsed.lastResponse);
-  }
-  if (typeof parsed.last_response === "string" && parsed.last_response.length > 0) {
-    return cleanOptionalAssistantResponseText(parsed.last_response);
+  const raw = firstNonEmptyString(parsed.output, parsed.lastResponse, parsed.last_response);
+  if (raw === undefined) return undefined;
+  return extractLatestAssistantResponse(raw);
+}
+
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) return value;
   }
   return undefined;
+}
+
+function extractLatestAssistantResponse(raw: string): string | undefined {
+  // ccc may return a full-screen capture (Claude Code banner, prompts, separators,
+  // status bar) in the output/lastResponse field rather than just the assistant
+  // reply. Parse it the same way as the transcript lines and keep only the most
+  // recent assistant block so terminal chrome never leaks into the chat bubble.
+  // Fall back to the plain cleaner when there is no assistant marker to anchor on.
+  const items = parseTranscriptLines(raw.replace(/\r/g, "").split("\n"));
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.role === "assistant" && item.text.trim().length > 0) {
+      return item.text;
+    }
+  }
+  return cleanOptionalAssistantResponseText(raw);
 }
 
 function parseReadItems(input: unknown): CccTranscriptItem[] {
@@ -270,6 +286,8 @@ function isTerminalChromeResponse(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length === 0) return true;
   if (trimmed.includes("Welcome back") && trimmed.includes("Claude Code")) return true;
+  // Claude Code v2 startup banner: ASCII block-art logo next to the version line.
+  if (/Claude Code v\d/.test(trimmed) && /[▀▄█▌▐▖▗▘▙▚▛▜▝▞▟]/u.test(trimmed)) return true;
   if (/^Working \(\d+s/i.test(trimmed)) return true;
   if (/^Select model\b/i.test(trimmed)) return true;
   if (/^esc to interrupt$/i.test(trimmed)) return true;

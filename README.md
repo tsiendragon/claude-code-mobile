@@ -29,6 +29,24 @@ npm test
 npm run dev -- --config config.example.json
 ```
 
+### Web Console (browser UI)
+
+The Bridge also serves a browser-based console from its HTTP port — the same one used
+for the WebSocket endpoint. It speaks the identical protocol as the Flutter app, so it is
+useful for manual testing and for driving the Bridge with a browser-automation agent to
+surface bugs. Once the Bridge is running, open `http://127.0.0.1:8900/` and enter your
+`CCM_TOKEN` to connect.
+
+The console covers sessions (list/create/attach/kill), prompts and `/commands`, approval
+cards, interrupt, message history paging, image upload, a file browser, system stats,
+feedback submission, and a raw event/RPC log for debugging. Note the Bridge keeps a single
+active socket, so connecting the console disconnects any attached mobile app (and vice
+versa).
+
+Toggle it with `web_ui_enabled` in the config (or `CCM_WEB_UI=0`); override the served
+directory with `web_ui_dir` (or `CCM_WEB_UI_DIR`). Like the WS endpoint, the console is
+unauthenticated at the HTTP layer — keep the Bridge behind WSS or a private network.
+
 The default config creates and exposes app-created workspaces under `~/workspace`. It also allows advanced server paths under `~/apps` for sessions that need to work in existing repos. `session.run` accepts either a `workspace_id` from the app workspace picker or an advanced `cwd` value. Advanced `cwd` values are paths on the server machine and must resolve inside `allowed_paths`.
 
 Bridge smoke test against a running local Bridge:
