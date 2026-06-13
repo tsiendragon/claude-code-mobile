@@ -385,7 +385,9 @@ export class SessionManager {
         this.append(session, { kind: "approval_requested", approval: session.pendingApproval });
       }
     } else if (session.pendingApproval?.status === "pending" && session.state !== "approval" && session.state !== "choosing") {
+      const staleApprovalId = session.pendingApproval.approvalId;
       session.pendingApproval = undefined;
+      this.append(session, { kind: "approval_resolved", approvalId: staleApprovalId, status: "interrupted" });
     }
     return session;
   }

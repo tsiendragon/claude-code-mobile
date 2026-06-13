@@ -23,7 +23,11 @@ export function parseCccRead(stdout: string): CccReadResult {
   const parsed = JSON.parse(stdout) as Record<string, unknown>;
   const output = parseReadOutput(parsed);
   const choicePrompt = parseChoicePrompt(parsed.lines, output);
-  const parsedItems = parseReadItems(parsed.lines);
+  const rawItems = parseReadItems(parsed.lines);
+  // Discard screen-parsed items that contain no assistant response — they're
+  // likely Claude's startup idle suggestion (❯ Try "fix typecheck errors") and
+  // should not appear as user messages in the transcript.
+  const parsedItems = rawItems.some((i) => i.role === "assistant") ? rawItems : [];
   const items: CccTranscriptItem[] | undefined = parsedItems.length > 0
     ? parsedItems
     : output
