@@ -120,25 +120,25 @@ function parseChoicePrompt(linesInput: unknown, output: string | undefined): Ccc
   if (lines.length === 0) return undefined;
 
   const cleanedLines = lines.map((line) => cleanTerminalLine(line));
-  const choices = [];
-  for (const line of cleanedLines) {
-    const match = line.match(/^\s*(?:[›>]\s*)?(\d{1,2})[.)]\s+(.+?)\s*$/u);
-    if (!match) continue;
+  // The selected option in Claude Code is prefixed with ❯ (U+276F); codex uses › (U+203A).
+  // Both (and a plain >) must be tolerated, otherwise the currently-highlighted choice is dropped.
+  const choiceRe = /^\s*(?:[›>❯]\s*)?(\d{1,2})[.)]\s+(.+?)\s*$/u;
+  const choices: { value: string; label: string }[] = [];
+  let firstChoiceIndex = -1;
+  cleanedLines.forEach((line, index) => {
+    const match = line.match(choiceRe);
+    if (!match) return;
     const label = match[2].replace(/\s+/g, " ").trim();
-    if (label.length === 0) continue;
+    if (label.length === 0) return;
+    if (firstChoiceIndex === -1) firstChoiceIndex = index;
     choices.push({ value: match[1], label });
-  }
+  });
   if (choices.length < 2) return undefined;
 
-  const meaningfulLines = cleanedLines
-    .map((line) => line.trim())
-    .filter((line) =>
-      line.length > 0 &&
-      !isTerminalChromeLine(line) &&
-      !line.toLowerCase().startsWith("press enter") &&
-      !line.startsWith("›")
-    );
-  const title = meaningfulLines.find((line) => !/^\d{1,2}[.)]\s+/.test(line)) ?? "Choose an option";
+  // The prompt question sits immediately above the choices. Scanning the whole pane
+  // would wrongly pick up stale output left higher in the terminal capture (e.g. the
+  // tail of a previous response), so walk back from the first choice line instead.
+  const title = findChoicePromptTitle(cleanedLines, firstChoiceIndex);
   const description = [
     title,
     "",
@@ -153,6 +153,25 @@ function parseChoicePrompt(linesInput: unknown, output: string | undefined): Ccc
     actions: ["choice"],
     choices
   };
+}
+
+function findChoicePromptTitle(cleanedLines: string[], firstChoiceIndex: number): string {
+  for (let index = firstChoiceIndex - 1; index >= 0; index -= 1) {
+    const trimmed = cleanedLines[index].trim();
+    if (trimmed.length === 0) continue;
+    if (isTerminalChromeLine(trimmed)) continue;
+    if (isChoiceSeparatorLine(trimmed)) continue;
+    if (/^\d{1,2}[.)]\s+/.test(trimmed)) continue;
+    if (trimmed.startsWith("›") || trimmed.startsWith("❯")) continue;
+    if (trimmed.toLowerCase().startsWith("press enter")) continue;
+    return trimmed;
+  }
+  return "Choose an option";
+}
+
+function isChoiceSeparatorLine(trimmed: string): boolean {
+  // Claude Code draws diff/preview boxes with dashed rules (╌, ╍) and box rules (─, -).
+  return /^[╌╍─-]+$/u.test(trimmed);
 }
 
 function normalizeTranscriptRole(input: unknown): CccTranscriptItem["role"] | undefined {

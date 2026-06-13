@@ -25,6 +25,9 @@ build/
 .claude/worktrees/
 cmdtools.zip
 
+# Playwright MCP run artifacts (snapshots, screenshots, console logs)
+.playwright-mcp/
+
 # Bridge runtime data (transcripts + badcase feedback may contain sensitive output)
 .ccm-bridge/
 **/feedback/
