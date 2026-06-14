@@ -251,19 +251,34 @@ class _ChatScreenState extends State<ChatScreen> {
                             );
                           },
                         ),
-                        if (_showJumpToBottom)
-                          Positioned(
-                            left: 0,
-                            right: 0,
-                            bottom: 12,
-                            child: Center(
-                              child: FilledButton.tonalIcon(
-                                icon: const Icon(Icons.keyboard_arrow_down),
-                                label: const Text('New messages'),
-                                onPressed: _scrollToBottom,
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 12,
+                          child: Center(
+                            child: AnimatedScale(
+                              scale: _showJumpToBottom ? 1 : 0.85,
+                              duration: CcmMotion.reduceMotionOf(context)
+                                  ? Duration.zero
+                                  : const Duration(milliseconds: 180),
+                              curve: Curves.easeOutCubic,
+                              child: AnimatedOpacity(
+                                opacity: _showJumpToBottom ? 1 : 0,
+                                duration: CcmMotion.reduceMotionOf(context)
+                                    ? Duration.zero
+                                    : const Duration(milliseconds: 160),
+                                child: IgnorePointer(
+                                  ignoring: !_showJumpToBottom,
+                                  child: FilledButton.tonalIcon(
+                                    icon: const Icon(Icons.keyboard_arrow_down),
+                                    label: const Text('New messages'),
+                                    onPressed: _scrollToBottom,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
+                        ),
                       ],
                     ),
             ),
@@ -2498,6 +2513,8 @@ class _ThinkingBubbleState extends State<_ThinkingBubble>
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    // liveWire (dim): the thinking dots mean the remote machine is working.
+    final dotColor = context.tokens.liveWireDim;
     return Align(
       alignment: Alignment.centerLeft,
       child: Material(
@@ -2516,7 +2533,7 @@ class _ThinkingBubbleState extends State<_ThinkingBubble>
                     width: 7,
                     height: 7,
                     decoration: BoxDecoration(
-                      color: colorScheme.onSurfaceVariant.withValues(
+                      color: dotColor.withValues(
                         alpha: _dotOpacity(_controller.value, index),
                       ),
                       shape: BoxShape.circle,

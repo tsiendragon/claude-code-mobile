@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/config/server_config.dart';
@@ -79,7 +80,10 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
         child: const Icon(Icons.add),
       ),
       body: RefreshIndicator(
-        onRefresh: _refreshAll,
+        onRefresh: () {
+          unawaited(HapticFeedback.selectionClick().catchError((Object _) {}));
+          return _refreshAll();
+        },
         child: ListView(
           padding: const EdgeInsets.only(bottom: 88),
           children: [
