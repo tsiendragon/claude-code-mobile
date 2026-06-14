@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 
 /// CCM's type voice as a [ThemeExtension].
 ///
-/// Humans speak in the app's default UI font; the machine (code, commands,
-/// diffs, paths, metrics, countdowns) speaks in [monoFamily]. Today that is the
-/// platform monospace, so there is zero binary/asset dependency — bundling
-/// JetBrains Mono later is a one-line change to [monoFamily].
+/// Humans speak in Inter; the machine (code, commands, diffs, paths, metrics,
+/// countdowns) speaks in [monoFamily] — JetBrains Mono. Both are bundled as
+/// local OFL assets (see pubspec `fonts:` + assets/fonts/), so they render
+/// instantly offline with no runtime fetch.
 @immutable
 class CcmTypography extends ThemeExtension<CcmTypography> {
   const CcmTypography({required this.monoFamily});
@@ -14,7 +14,7 @@ class CcmTypography extends ThemeExtension<CcmTypography> {
   final String monoFamily;
 
   factory CcmTypography.standard() =>
-      const CcmTypography(monoFamily: 'monospace');
+      const CcmTypography(monoFamily: 'JetBrainsMono');
 
   /// Base monospace [TextStyle]; callers `copyWith` size/colour.
   TextStyle get mono => TextStyle(fontFamily: monoFamily);

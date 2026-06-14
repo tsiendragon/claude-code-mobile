@@ -78,6 +78,7 @@ class _CcmAppState extends State<CcmApp> with WidgetsBindingObserver {
     return ThemeData(
       colorScheme: scheme,
       useMaterial3: true,
+      fontFamily: 'Inter',
       scaffoldBackgroundColor: scheme.surface,
       extensions: <ThemeExtension<dynamic>>[
         tokens,
