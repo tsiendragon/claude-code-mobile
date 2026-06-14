@@ -1573,13 +1573,16 @@ class _ChatBubble extends StatelessWidget {
         ? colorScheme.primaryContainer
         : colorScheme.surfaceContainerHigh;
     final alignment = isUser ? Alignment.centerRight : Alignment.centerLeft;
-    final content = isAnimating
-        ? _PlainMessage(text: displayText)
-        : _MarkdownMessage(
-            sessionId: sessionId,
-            text: displayText,
-            onOpenFile: onOpenFile,
-          );
+    final content = _BubbleContent(
+      child: isAnimating
+          ? _PlainMessage(key: const ValueKey('plain'), text: displayText)
+          : _MarkdownMessage(
+              key: const ValueKey('md'),
+              sessionId: sessionId,
+              text: displayText,
+              onOpenFile: onOpenFile,
+            ),
+    );
 
     return Align(
       alignment: alignment,
@@ -1788,7 +1791,7 @@ class _FeedbackSheetState extends State<_FeedbackSheet> {
 /// the message completes (the bubble re-renders as markdown). The 40ms stream
 /// loop is untouched — this is a sibling blink controller, fade-only.
 class _PlainMessage extends StatefulWidget {
-  const _PlainMessage({required this.text});
+  const _PlainMessage({super.key, required this.text});
 
   final String text;
 
@@ -1899,8 +1902,44 @@ class _MessageBody extends StatelessWidget {
   }
 }
 
+/// Crossfades the bubble body when it swaps from the streaming plain text to
+/// the final markdown. The first build is instant (Duration.zero) so scroll
+/// recycling never flickers historical bubbles in — only the in-place
+/// plain→markdown key change animates.
+class _BubbleContent extends StatefulWidget {
+  const _BubbleContent({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_BubbleContent> createState() => _BubbleContentState();
+}
+
+class _BubbleContentState extends State<_BubbleContent> {
+  bool _first = true;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_first) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _first = false);
+      });
+    }
+    final duration = _first || CcmMotion.reduceMotionOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 220);
+    return AnimatedSwitcher(
+      duration: duration,
+      transitionBuilder: (child, animation) =>
+          FadeTransition(opacity: animation, child: child),
+      child: widget.child,
+    );
+  }
+}
+
 class _MarkdownMessage extends StatefulWidget {
   const _MarkdownMessage({
+    super.key,
     required this.text,
     this.sessionId,
     this.onOpenFile,
