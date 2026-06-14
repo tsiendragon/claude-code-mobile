@@ -80,7 +80,9 @@ class CcmTokens extends ThemeExtension<CcmTokens> {
       diffAdd: isDark ? const Color(0xFF3FB950) : const Color(0xFF1A7F37),
       diffRemove: scheme.error,
       diffMeta: scheme.onSurfaceVariant,
-      liveWire: const Color(0xFFE3A008),
+      // Deeper gold on light so the amber clears 3:1 non-text contrast on a
+      // white surface (WCAG 1.4.11) while staying unmistakably "liveWire".
+      liveWire: isDark ? const Color(0xFFE3A008) : const Color(0xFF9A6700),
       liveWireDim: isDark ? const Color(0xFF8A6D1B) : const Color(0xFFB07D12),
       connOk: isDark ? const Color(0xFF3FB950) : const Color(0xFF1A7F37),
       connError: scheme.error,
