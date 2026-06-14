@@ -109,15 +109,9 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
                 ),
               ),
             if (sessions.isLoading && sessions.sessions.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(32),
-                child: Center(child: CircularProgressIndicator()),
-              ),
+              const _SessionListSkeleton(),
             if (!sessions.isLoading && sessions.sessions.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(32),
-                child: Center(child: Text('No sessions yet.')),
-              ),
+              const _SessionsEmptyState(),
             for (final session in sessions.sessions)
               _SessionTile(
                 session: session,
@@ -1165,8 +1159,17 @@ class _SessionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final badge = _statusBadgeText(session);
     final path = _shortPath(session.cwd);
-    return ListTile(
-      leading: Icon(_stateIcon(session.state)),
+    final tokens = context.tokens;
+    // The session needs you: carry the liveWire signal as mass (a full-height
+    // left bar + faint wash), not just a marginal chip.
+    final urgent = session.state == SessionState.approval ||
+        session.state == SessionState.choosing ||
+        session.needsAttention;
+    final tile = ListTile(
+      leading: Icon(
+        _stateIcon(session.state),
+        color: urgent ? tokens.liveWire : null,
+      ),
       title: Row(
         children: [
           Expanded(
@@ -1203,6 +1206,14 @@ class _SessionTile extends StatelessWidget {
         onPressed: session.state == SessionState.ended ? null : onKill,
       ),
       onTap: onTap,
+    );
+    if (!urgent) return tile;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: tokens.liveWire.withValues(alpha: 0.06),
+        border: Border(left: BorderSide(color: tokens.liveWire, width: 3)),
+      ),
+      child: tile,
     );
   }
 
@@ -1304,6 +1315,132 @@ class _StatusBadge extends StatelessWidget {
       child: Text(
         text,
         style: Theme.of(context).textTheme.labelSmall,
+      ),
+    );
+  }
+}
+
+/// Branded empty state: a monospace wordmark over a liveWire hairline, with a
+/// hint pointing at the FAB — never a bare "No sessions yet".
+class _SessionsEmptyState extends StatelessWidget {
+  const _SessionsEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.tokens;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 56, 24, 24),
+      child: Column(
+        children: [
+          Text(
+            'ccm',
+            style: context.type.mono.copyWith(
+              fontSize: 40,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 2,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Container(width: 28, height: 2, color: tokens.liveWire),
+          const SizedBox(height: 22),
+          Text('No sessions yet', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 6),
+          Text(
+            'Tap + to start a session on the remote machine.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Tile-shaped shimmer placeholder shown while the first session load is in
+/// flight — intentional, not a stock centred spinner. Honours reduce-motion.
+class _SessionListSkeleton extends StatefulWidget {
+  const _SessionListSkeleton();
+
+  @override
+  State<_SessionListSkeleton> createState() => _SessionListSkeletonState();
+}
+
+class _SessionListSkeletonState extends State<_SessionListSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (CcmMotion.reduceMotionOf(context)) {
+      _controller.stop();
+    } else if (!_controller.isAnimating) {
+      _controller.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Widget _bar(Color base, double width, double height, double t) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: base.withValues(alpha: 0.05 + 0.05 * t),
+        borderRadius: BorderRadius.circular(3),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final base = Theme.of(context).colorScheme.onSurface;
+    return Column(
+      children: List<Widget>.generate(
+        4,
+        (_) => AnimatedBuilder(
+          animation: _controller,
+          builder: (context, __) {
+            final t = _controller.value;
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _bar(base, 24, 24, t),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _bar(base, 160, 14, t),
+                        const SizedBox(height: 8),
+                        _bar(base, double.infinity, 10, t),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
