@@ -7,6 +7,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:provider/provider.dart';
 
+import '../../core/theme/ccm_tokens.dart';
 import '../../core/utils/format_utils.dart';
 import '../../protocol/client.dart';
 import '../../protocol/models.dart';
@@ -219,12 +220,12 @@ class _ChatScreenState extends State<ChatScreen> {
                                 onRetry: item.failed && !_isSending
                                     ? () => _retryFailedMessage(item)
                                     : null,
-                                onFeedback: item.role ==
-                                            ChatItemRole.assistant &&
-                                        item.seq != null &&
-                                        !item.pending
-                                    ? () => _showFeedbackSheet(item)
-                                    : null,
+                                onFeedback:
+                                    item.role == ChatItemRole.assistant &&
+                                            item.seq != null &&
+                                            !item.pending
+                                        ? () => _showFeedbackSheet(item)
+                                        : null,
                               );
                             }
 
@@ -1536,8 +1537,7 @@ class _ChatBubble extends StatelessWidget {
                             style: TextButton.styleFrom(
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
-                              tapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
                             icon: const Icon(Icons.refresh, size: 16),
                             label: const Text('Retry'),
@@ -1627,8 +1627,7 @@ class _FeedbackSheetState extends State<_FeedbackSheet> {
                   ChoiceChip(
                     label: Text(verdict.label),
                     selected: _verdict == verdict.value,
-                    onSelected: (_) =>
-                        setState(() => _verdict = verdict.value),
+                    onSelected: (_) => setState(() => _verdict = verdict.value),
                   ),
               ],
             ),
@@ -1780,7 +1779,7 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
     final colorScheme = theme.colorScheme;
     final bodyStyle = theme.textTheme.bodyMedium;
     final codeStyle = bodyStyle?.copyWith(
-      fontFamily: 'monospace',
+      fontFamily: context.type.monoFamily,
       backgroundColor: colorScheme.surfaceContainerHighest,
     );
 
@@ -2164,7 +2163,7 @@ class _CodePreview extends StatelessWidget {
           child: SelectableText(
             content,
             style: TextStyle(
-              fontFamily: 'monospace',
+              fontFamily: context.type.monoFamily,
               color: colorScheme.onSurface,
             ),
           ),

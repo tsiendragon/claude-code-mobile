@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'core/config/server_config_controller.dart';
+import 'core/theme/ccm_motion.dart';
+import 'core/theme/ccm_tokens.dart';
+import 'core/theme/ccm_typography.dart';
 import 'features/server_config/server_config_screen.dart';
 import 'features/sessions/conversation_list_screen.dart';
 import 'protocol/client.dart';
@@ -52,22 +55,38 @@ class _CcmAppState extends State<CcmApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'ccm',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
+      theme: _buildTheme(
+        ColorScheme.fromSeed(
           seedColor: const Color(0xff1f6feb),
           brightness: Brightness.light,
         ),
-        useMaterial3: true,
       ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
+      darkTheme: _buildTheme(
+        ColorScheme.fromSeed(
           seedColor: const Color(0xff58a6ff),
           brightness: Brightness.dark,
         ),
-        useMaterial3: true,
       ),
       themeMode: ThemeMode.system,
       home: const _BootstrapScreen(),
+    );
+  }
+
+  /// Builds a theme from [scheme] and registers the CCM token layer.
+  ///
+  /// `surfaceTint` is disabled so Material 3 stops washing elevated surfaces
+  /// with the primary colour — keeping surfaces neutral so the rationed
+  /// `liveWire` accent is the only chromatic event.
+  ThemeData _buildTheme(ColorScheme scheme) {
+    final tinted = scheme.copyWith(surfaceTint: Colors.transparent);
+    return ThemeData(
+      colorScheme: tinted,
+      useMaterial3: true,
+      extensions: <ThemeExtension<dynamic>>[
+        CcmTokens.fromScheme(tinted),
+        CcmTypography.standard(),
+        CcmMotion.standard(),
+      ],
     );
   }
 }

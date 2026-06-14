@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/theme/ccm_tokens.dart';
+import '../../core/theme/ccm_typography.dart';
 import '../../protocol/models.dart';
 
 class ApprovalCard extends StatefulWidget {
@@ -51,7 +53,7 @@ class _ApprovalCardState extends State<ApprovalCard>
     super.didUpdateWidget(oldWidget);
     final approvalChanged =
         oldWidget.approval.approvalId != widget.approval.approvalId ||
-        oldWidget.approval.contentHash != widget.approval.contentHash;
+            oldWidget.approval.contentHash != widget.approval.contentHash;
     if (approvalChanged) {
       _pendingAction = null;
       _triggerAppearanceHaptic();
@@ -124,114 +126,140 @@ class _ApprovalCardState extends State<ApprovalCard>
     final isExpired = _isExpired;
     final commandContent = _commandContent(approval);
     final description = commandContent?.description ?? approval.description;
-    return Material(
-      color: colorScheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    final tokens = context.tokens;
+    // liveWire: the rationed "the machine needs you" accent — shifts to the
+    // error colour in the final minute, reusing the expiry threshold.
+    final edgeColor = isExpired || remaining.inSeconds < 60
+        ? tokens.connError
+        : tokens.liveWire;
+    return Stack(
+      children: [
+        Material(
+          color: colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(tokens.radiusPanel),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.verified_user_outlined),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _operationLabel(approval.operationKind),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                Text(
-                  _formatExpiry(remaining, isExpired: isExpired),
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: _expiryColor(
-                          colorScheme,
-                          remaining,
-                          isExpired: isExpired,
-                        ),
-                        fontWeight: isExpired || remaining.inSeconds < 60
-                            ? FontWeight.w600
-                            : null,
+                Row(
+                  children: [
+                    const Icon(Icons.verified_user_outlined),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _operationLabel(approval.operationKind),
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
-                ),
-              ],
-            ),
-            if (description.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(description),
-            ],
-            if (commandContent != null) ...[
-              const SizedBox(height: 8),
-              _CommandBlock(command: commandContent.command),
-            ],
-            if (approval.paths.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final path in approval.paths)
-                    Chip(
-                      avatar: const Icon(Icons.insert_drive_file, size: 16),
-                      label: Text(path),
                     ),
+                    Text(
+                      _formatExpiry(remaining, isExpired: isExpired),
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            color: _expiryColor(
+                              colorScheme,
+                              remaining,
+                              isExpired: isExpired,
+                            ),
+                            fontWeight: isExpired || remaining.inSeconds < 60
+                                ? FontWeight.w600
+                                : null,
+                            fontFeatures: CcmTypography.tabularFigures,
+                          ),
+                    ),
+                  ],
+                ),
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(description),
                 ],
-              ),
-            ],
-            if (approval.diffSummary != null &&
-                approval.diffSummary!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              _DiffSummary(diffSummary: approval.diffSummary!),
-            ],
-            const SizedBox(height: 12),
-            approval.operationKind == 'choice' && approval.choices.isNotEmpty
-                ? _ChoiceButtons(
-                    choices: approval.choices,
-                    isSubmitting: widget.isSubmitting,
-                    isExpired: isExpired,
-                    pendingAction: _pendingAction,
-                    onAction: (action) => _submitAction(context, action),
-                  )
-                : Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                if (commandContent != null) ...[
+                  const SizedBox(height: 8),
+                  _CommandBlock(command: commandContent.command),
+                ],
+                if (approval.paths.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
                     children: [
-                      for (final action in approval.actions)
-                        _isRejectAction(action)
-                            ? OutlinedButton.icon(
-                                icon: _isActive(action)
-                                    ? const SizedBox.square(
-                                        dimension: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : Icon(_actionIcon(action)),
-                                label: Text(_actionLabel(action)),
-                                onPressed: widget.isSubmitting || isExpired
-                                    ? null
-                                    : () => _submitAction(context, action),
-                              )
-                            : FilledButton.icon(
-                                icon: _isActive(action)
-                                    ? const SizedBox.square(
-                                        dimension: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : Icon(_actionIcon(action)),
-                                label: Text(_actionLabel(action)),
-                                onPressed: widget.isSubmitting || isExpired
-                                    ? null
-                                    : () => _submitAction(context, action),
-                              ),
+                      for (final path in approval.paths)
+                        Chip(
+                          avatar: const Icon(Icons.insert_drive_file, size: 16),
+                          label: Text(path),
+                        ),
                     ],
                   ),
-          ],
+                ],
+                if (approval.diffSummary != null &&
+                    approval.diffSummary!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  _DiffSummary(diffSummary: approval.diffSummary!),
+                ],
+                const SizedBox(height: 12),
+                approval.operationKind == 'choice' &&
+                        approval.choices.isNotEmpty
+                    ? _ChoiceButtons(
+                        choices: approval.choices,
+                        isSubmitting: widget.isSubmitting,
+                        isExpired: isExpired,
+                        pendingAction: _pendingAction,
+                        onAction: (action) => _submitAction(context, action),
+                      )
+                    : Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final action in approval.actions)
+                            _isRejectAction(action)
+                                ? OutlinedButton.icon(
+                                    icon: _isActive(action)
+                                        ? const SizedBox.square(
+                                            dimension: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : Icon(_actionIcon(action)),
+                                    label: Text(_actionLabel(action)),
+                                    onPressed: widget.isSubmitting || isExpired
+                                        ? null
+                                        : () => _submitAction(context, action),
+                                  )
+                                : FilledButton.icon(
+                                    icon: _isActive(action)
+                                        ? const SizedBox.square(
+                                            dimension: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : Icon(_actionIcon(action)),
+                                    label: Text(_actionLabel(action)),
+                                    onPressed: widget.isSubmitting || isExpired
+                                        ? null
+                                        : () => _submitAction(context, action),
+                                  ),
+                        ],
+                      ),
+              ],
+            ),
+          ),
         ),
-      ),
+        PositionedDirectional(
+          start: 0,
+          top: 0,
+          bottom: 0,
+          child: Container(
+            width: 4,
+            decoration: BoxDecoration(
+              color: edgeColor,
+              borderRadius: BorderRadiusDirectional.horizontal(
+                start: Radius.circular(tokens.radiusPanel),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -381,8 +409,7 @@ _CommandContent _splitCommandDescription(String description) {
     );
   }
 
-  final inlineMatches =
-      RegExp(r'`([^`\n]+)`').allMatches(description).toList();
+  final inlineMatches = RegExp(r'`([^`\n]+)`').allMatches(description).toList();
   if (inlineMatches.length == 1) {
     final match = inlineMatches.single;
     return _CommandContent(
@@ -416,10 +443,9 @@ _CommandContent _splitCommandDescription(String description) {
     );
   }
 
-  final colonMatch =
-      RegExp(r'^(.*(?:command|run|execute|运行|执行).*?):\s*(.+)$',
-              caseSensitive: false)
-          .firstMatch(description);
+  final colonMatch = RegExp(r'^(.*(?:command|run|execute|运行|执行).*?):\s*(.+)$',
+          caseSensitive: false)
+      .firstMatch(description);
   if (colonMatch != null) {
     return _CommandContent(
       description: _cleanCommandDescription(colonMatch.group(1)!),
@@ -445,16 +471,13 @@ class _CommandBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = colorScheme.brightness == Brightness.dark;
-    final background = isDark ? colorScheme.surface : const Color(0xFF1F2937);
-    final foreground =
-        isDark ? colorScheme.onSurface : colorScheme.onInverseSurface;
+    final tokens = context.tokens;
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(8),
-        border: isDark ? Border.all(color: colorScheme.outlineVariant) : null,
+        color: tokens.codeSurface,
+        borderRadius: BorderRadius.circular(tokens.radiusPanel),
+        border: Border.all(color: colorScheme.outlineVariant),
       ),
       padding: const EdgeInsets.all(10),
       child: SingleChildScrollView(
@@ -462,8 +485,8 @@ class _CommandBlock extends StatelessWidget {
         child: SelectableText(
           command,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: foreground,
-                fontFamily: 'monospace',
+                color: tokens.codeOnSurface,
+                fontFamily: context.type.monoFamily,
               ),
         ),
       ),
@@ -479,14 +502,15 @@ class _DiffSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final tokens = context.tokens;
     final baseStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
-          fontFamily: 'monospace',
+          fontFamily: context.type.monoFamily,
         );
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
         color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(tokens.radiusPanel),
         border: Border.all(color: colorScheme.outlineVariant),
       ),
       padding: const EdgeInsets.all(10),
@@ -495,7 +519,7 @@ class _DiffSummary extends StatelessWidget {
         child: SelectableText.rich(
           TextSpan(
             style: baseStyle,
-            children: _diffLineSpans(diffSummary, colorScheme, baseStyle),
+            children: _diffLineSpans(diffSummary, tokens, baseStyle),
           ),
         ),
       ),
@@ -504,7 +528,7 @@ class _DiffSummary extends StatelessWidget {
 
   List<TextSpan> _diffLineSpans(
     String diffSummary,
-    ColorScheme colorScheme,
+    CcmTokens tokens,
     TextStyle? baseStyle,
   ) {
     final lines = diffSummary.split('\n');
@@ -513,20 +537,16 @@ class _DiffSummary extends StatelessWidget {
         TextSpan(
           text: index == lines.length - 1 ? lines[index] : '${lines[index]}\n',
           style: baseStyle?.copyWith(
-            color: _diffLineColor(lines[index], colorScheme),
+            color: _diffLineColor(lines[index], tokens),
           ),
         ),
     ];
   }
 
-  Color? _diffLineColor(String line, ColorScheme colorScheme) {
-    if (line.startsWith('@@')) return colorScheme.onSurfaceVariant;
-    if (line.startsWith('+')) {
-      return colorScheme.brightness == Brightness.dark
-          ? Colors.greenAccent.shade400
-          : Colors.green.shade700;
-    }
-    if (line.startsWith('-')) return colorScheme.error;
+  Color? _diffLineColor(String line, CcmTokens tokens) {
+    if (line.startsWith('@@')) return tokens.diffMeta;
+    if (line.startsWith('+')) return tokens.diffAdd;
+    if (line.startsWith('-')) return tokens.diffRemove;
     return null;
   }
 }

@@ -5,6 +5,9 @@ import 'package:provider/provider.dart';
 
 import '../../core/config/server_config.dart';
 import '../../core/config/server_config_controller.dart';
+import '../../core/theme/ccm_motion.dart';
+import '../../core/theme/ccm_tokens.dart';
+import '../../core/theme/ccm_typography.dart';
 import '../../core/utils/format_utils.dart';
 import '../../protocol/client.dart';
 import '../../protocol/models.dart';
@@ -48,6 +51,10 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
       appBar: AppBar(
         title: const Text('Sessions'),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Center(child: _ConnectionDot(state: client.state)),
+          ),
           IconButton(
             tooltip: 'Server',
             icon: const Icon(Icons.settings),
@@ -331,7 +338,8 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Skip permission prompts'),
-                subtitle: const Text('Runs with --dangerously-skip-permissions'),
+                subtitle:
+                    const Text('Runs with --dangerously-skip-permissions'),
                 value: _skipPermissions,
                 onChanged: _isSubmitting
                     ? null
@@ -943,8 +951,7 @@ class _SystemStatsPanelState extends State<_SystemStatsPanel> {
                             ? Icons.keyboard_arrow_up
                             : Icons.keyboard_arrow_down,
                       ),
-                      onPressed: () =>
-                          setState(() => _expanded = !_expanded),
+                      onPressed: () => setState(() => _expanded = !_expanded),
                     ),
                   ],
                 ),
@@ -973,7 +980,8 @@ class _SystemStatsPanelState extends State<_SystemStatsPanel> {
                       if (stats.uptimeSeconds > 0)
                         'up ${_formatDuration(stats.uptimeSeconds)}',
                     ].join(' · '),
-                    style: theme.textTheme.bodySmall,
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(fontFeatures: CcmTypography.tabularFigures),
                   ),
                 ],
               ],
@@ -1011,11 +1019,133 @@ class _MetricBar extends StatelessWidget {
           child: Text(
             trailing,
             textAlign: TextAlign.right,
-            style: Theme.of(context).textTheme.labelSmall,
+            style: Theme.of(context)
+                .textTheme
+                .labelSmall
+                ?.copyWith(fontFeatures: CcmTypography.tabularFigures),
             overflow: TextOverflow.ellipsis,
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The "alive" connection dot: the bridge's heartbeat in the app bar.
+///
+/// Reads the existing [BridgeConnectionState] only — it never drives the
+/// connection. Steady `liveWire` amber when connected, a slow breathe while
+/// connecting/reconnecting, error-red on failure, and a dim grey when idle.
+/// Respects reduce-motion (no breathe).
+class _ConnectionDot extends StatefulWidget {
+  const _ConnectionDot({required this.state});
+
+  final BridgeConnectionState state;
+
+  @override
+  State<_ConnectionDot> createState() => _ConnectionDotState();
+}
+
+class _ConnectionDotState extends State<_ConnectionDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAnimation();
+  }
+
+  @override
+  void didUpdateWidget(_ConnectionDot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.state != widget.state) _syncAnimation();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  bool get _isBreathing =>
+      widget.state == BridgeConnectionState.connecting ||
+      widget.state == BridgeConnectionState.authenticating ||
+      widget.state == BridgeConnectionState.reconnecting;
+
+  void _syncAnimation() {
+    if (_isBreathing && !CcmMotion.reduceMotionOf(context)) {
+      if (!_controller.isAnimating) _controller.repeat(reverse: true);
+    } else {
+      _controller.stop();
+    }
+  }
+
+  Color _color(BuildContext context) {
+    final tokens = context.tokens;
+    switch (widget.state) {
+      case BridgeConnectionState.connected:
+      case BridgeConnectionState.connecting:
+      case BridgeConnectionState.authenticating:
+      case BridgeConnectionState.reconnecting:
+        return tokens.liveWire;
+      case BridgeConnectionState.error:
+        return tokens.connError;
+      case BridgeConnectionState.disconnected:
+        return Theme.of(context)
+            .colorScheme
+            .onSurfaceVariant
+            .withValues(alpha: 0.4);
+    }
+  }
+
+  String get _label {
+    switch (widget.state) {
+      case BridgeConnectionState.connected:
+        return 'Connected';
+      case BridgeConnectionState.connecting:
+        return 'Connecting…';
+      case BridgeConnectionState.authenticating:
+        return 'Authenticating…';
+      case BridgeConnectionState.reconnecting:
+        return 'Reconnecting…';
+      case BridgeConnectionState.error:
+        return 'Connection error';
+      case BridgeConnectionState.disconnected:
+        return 'Disconnected';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dot = Container(
+      width: 9,
+      height: 9,
+      decoration: BoxDecoration(
+        color: _color(context),
+        shape: BoxShape.circle,
+      ),
+    );
+    final breathing = _isBreathing && !CcmMotion.reduceMotionOf(context);
+    return Tooltip(
+      message: _label,
+      child: breathing
+          ? FadeTransition(
+              opacity: Tween<double>(begin: 0.35, end: 1).animate(
+                CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+              ),
+              child: dot,
+            )
+          : dot,
     );
   }
 }
@@ -1046,13 +1176,13 @@ class _SessionTile extends StatelessWidget {
             ),
           ),
           if (badge != null)
-              _StatusBadge(
-                text: badge,
-                color: _statusBadgeColor(
-                  Theme.of(context).colorScheme,
-                  session,
-                ),
+            _StatusBadge(
+              text: badge,
+              color: _statusBadgeColor(
+                Theme.of(context).colorScheme,
+                session,
               ),
+            ),
         ],
       ),
       subtitle: Text(
@@ -1123,7 +1253,6 @@ class _SessionTile extends StatelessWidget {
   }
 }
 
-
 String _formatDuration(int seconds) {
   final days = seconds ~/ 86400;
   final hours = (seconds % 86400) ~/ 3600;
@@ -1140,8 +1269,18 @@ String _formatRelativeTime(DateTime time) {
   if (diff.inHours < 24) return '${diff.inHours}h ago';
   if (diff.inDays < 7) return '${diff.inDays}d ago';
   const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec'
   ];
   final local = time.toLocal();
   return '${months[local.month - 1]} ${local.day}';
