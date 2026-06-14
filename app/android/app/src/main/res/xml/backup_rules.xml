@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android <= 12 (API <= 30) Auto Backup rules.
+     Back up the non-secret URL/mode mirror (FlutterSharedPreferences) but NOT
+     the encrypted token store (FlutterSecureStorage) — its KeyStore master key
+     is wiped on uninstall, so a restored copy would only fail to decrypt. -->
+<full-backup-content>
+    <!-- Explicit include => everything else (incl. FlutterSecureStorage) is
+         excluded by default, so the token store is never backed up. -->
+    <include domain="sharedpref" path="FlutterSharedPreferences.xml" />
+</full-backup-content>

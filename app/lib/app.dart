@@ -156,8 +156,13 @@ class _BootstrapScreenState extends State<_BootstrapScreen> {
           );
         }
 
-        final config = context.watch<ServerConfigController>().config;
-        if (config == null) {
+        final controller = context.watch<ServerConfigController>();
+        final config = controller.config;
+        final token = controller.token;
+        // After a reinstall the URL is recovered from the backed-up mirror but
+        // the token isn't (it's wiped with the KeyStore), so route to the
+        // config screen — which pre-fills the URL — until a token is entered.
+        if (config == null || token == null || token.isEmpty) {
           return const ServerConfigScreen();
         }
 

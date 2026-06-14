@@ -1,4 +1,5 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/server_config.dart';
 import '../config/url_validation.dart';
@@ -33,6 +34,13 @@ class SecureConfigStore {
   static const _tokenKey = 'token';
   static const _activeModeKey = 'active_connection_mode';
 
+  // Non-secret URL/mode are mirrored to (backed-up) SharedPreferences so they
+  // survive an uninstall/reinstall and pre-fill the config screen. The token is
+  // deliberately NOT mirrored: it stays in secure storage, whose key lives in
+  // the Android KeyStore and is wiped on uninstall, so the user re-enters only
+  // the token after a reinstall.
+  static const _mirrorPrefix = 'ccm_mirror_';
+
   final FlutterSecureStorage _storage;
 
   Future<SavedConfig> read() async {
@@ -52,6 +60,20 @@ class SecureConfigStore {
           : _inferMode(legacy.config!.serverUrl);
       profiles.putIfAbsent(activeMode, () => legacy);
     }
+
+    // Recover the URL/mode from the backed-up mirror for any mode that secure
+    // storage no longer has a config for (e.g. after a reinstall).
+    final mirror = await _readMirror();
+    for (final entry in mirror.configs.entries) {
+      final existing = profiles[entry.key];
+      if (existing?.config == null) {
+        profiles[entry.key] = SavedConnectionProfile(
+          config: entry.value,
+          token: existing?.token,
+        );
+      }
+    }
+    activeMode ??= mirror.activeMode;
 
     activeMode ??= ConnectionMode.direct;
     final active = profiles[activeMode];
@@ -86,6 +108,41 @@ class SecureConfigStore {
       value: config.allowPrivateWs.toString(),
     );
     await _storage.write(key: _tokenKey, value: token);
+
+    await _writeMirror(config);
+  }
+
+  Future<void> _writeMirror(ServerConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    final mode = config.connectionMode;
+    await prefs.setString('${_mirrorPrefix}active_mode', mode.name);
+    await prefs.setString(
+      '${_mirrorPrefix}url_${mode.name}',
+      config.serverUrl.toString(),
+    );
+    await prefs.setBool(
+      '${_mirrorPrefix}allow_${mode.name}',
+      config.allowPrivateWs,
+    );
+  }
+
+  Future<_MirrorData> _readMirror() async {
+    final prefs = await SharedPreferences.getInstance();
+    final configs = <ConnectionMode, ServerConfig>{};
+    for (final mode in ConnectionMode.values) {
+      final url = prefs.getString('${_mirrorPrefix}url_${mode.name}');
+      if (url == null) continue;
+      configs[mode] = ServerConfig(
+        serverUrl: Uri.parse(url),
+        allowPrivateWs:
+            prefs.getBool('${_mirrorPrefix}allow_${mode.name}') ?? false,
+        connectionMode: mode,
+      );
+    }
+    return _MirrorData(
+      configs: configs,
+      activeMode: _parseMode(prefs.getString('${_mirrorPrefix}active_mode')),
+    );
   }
 
   Future<SavedConnectionProfile> _readProfile(ConnectionMode mode) async {
@@ -119,6 +176,13 @@ class SecureConfigStore {
       token: token,
     );
   }
+}
+
+class _MirrorData {
+  const _MirrorData({required this.configs, required this.activeMode});
+
+  final Map<ConnectionMode, ServerConfig> configs;
+  final ConnectionMode? activeMode;
 }
 
 String _modeKey(String base, ConnectionMode mode) => '${base}_${mode.name}';
