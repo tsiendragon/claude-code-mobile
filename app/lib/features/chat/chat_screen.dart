@@ -20,6 +20,36 @@ const _linkChannel = MethodChannel('ccm_mobile/links');
 const _mediaChannel = MethodChannel('ccm_mobile/media');
 const _assistantStreamFrameDelay = Duration(milliseconds: 40);
 
+/// Index of the existing assistant bubble that [incoming] continues, or -1 to
+/// append a new one.
+///
+/// Beyond an exact id match, the bridge can re-id the SAME growing assistant
+/// turn across polls (e.g. "A+B" then "A+B+C" with different message ids). To
+/// avoid rendering that as two bubbles, we treat [incoming] as the same message
+/// when it equals — or grows from — the last assistant bubble's shown or full
+/// text, so the caller applies only the increment. A new turn is always
+/// separated by a user message, so this never merges distinct turns.
+int assistantMergeIndex(
+  List<ChatItem> items,
+  ChatItem incoming,
+  String Function(ChatItem) shownTextOf,
+) {
+  final byId = items.indexWhere((existing) => existing.id == incoming.id);
+  if (byId >= 0) return byId;
+  if (items.isEmpty) return -1;
+  final lastIndex = items.length - 1;
+  final last = items[lastIndex];
+  if (last.role != ChatItemRole.assistant) return -1;
+  final shown = shownTextOf(last);
+  if (incoming.text == shown ||
+      incoming.text == last.text ||
+      incoming.text.startsWith(shown) ||
+      incoming.text.startsWith(last.text)) {
+    return lastIndex;
+  }
+  return -1;
+}
+
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.session});
 
@@ -918,24 +948,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _items = _replaceItemAt(existingIndex, item);
   }
 
-  int _assistantSnapshotIndex(ChatItem item) {
-    final existingIndex =
-        _items.indexWhere((existing) => existing.id == item.id);
-    if (existingIndex >= 0) return existingIndex;
-    if (!item.snapshot || _items.isEmpty) return -1;
-
-    final lastIndex = _items.length - 1;
-    final last = _items[lastIndex];
-    // Fallback only when the incoming snapshot is a continuation of the last
-    // item's text — prevents a new turn's first snapshot from clobbering a
-    // completed prior-turn message that happened to be stored as snapshot:true.
-    if (last.role == ChatItemRole.assistant &&
-        last.snapshot &&
-        item.text.startsWith(last.text)) {
-      return lastIndex;
-    }
-    return -1;
-  }
+  int _assistantSnapshotIndex(ChatItem item) =>
+      assistantMergeIndex(_items, item, _displayedAssistantText);
 
   String _displayedAssistantText(ChatItem item) {
     return _assistantAnimations[item.id]?.displayedText ?? item.text;
