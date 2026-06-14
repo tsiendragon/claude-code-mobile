@@ -36,6 +36,9 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatItem> _items = const [];
   List<_PendingImageAttachment> _pendingImages = const [];
   final Set<String> _expandedMessageIds = <String>{};
+  // Ids whose one-shot entrance has played, so it never re-fires on scroll
+  // recycling or stream-frame rebuilds.
+  final Set<String> _animatedInIds = <String>{};
   final Map<String, _AssistantMessageAnimation> _assistantAnimations =
       <String, _AssistantMessageAnimation>{};
   PendingApproval? _pendingApproval;
@@ -72,6 +75,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _items = const [];
     _pendingApproval = null;
     _expandedMessageIds.clear();
+    _animatedInIds.clear();
     _hasEventGap = false;
     _showJumpToBottom = false;
     _historyBefore = null;
@@ -209,39 +213,58 @@ class _ChatScreenState extends State<ChatScreen> {
                                 index - (_showHistoryHeader ? 1 : 0);
                             if (itemIndex < _items.length) {
                               final item = _items[itemIndex];
+                              // Animate only a freshly-appended last item, once;
+                              // history prepends and scroll recycling never
+                              // re-fire it (gated by _animatedInIds).
+                              final isNewLast =
+                                  itemIndex == _items.length - 1 &&
+                                      !_animatedInIds.contains(item.id);
+                              if (isNewLast) _animatedInIds.add(item.id);
                               // RepaintBoundary so a streaming bubble's frequent
                               // repaints don't dirty the rest of the list.
                               return RepaintBoundary(
                                 key: ValueKey(item.id),
-                                child: _ChatBubble(
-                                  sessionId: widget.session.sessionId,
-                                  item: item,
-                                  animation: _assistantAnimations[item.id],
-                                  expanded:
-                                      _expandedMessageIds.contains(item.id),
-                                  onToggleExpanded: () =>
-                                      _toggleExpanded(item.id),
-                                  onOpenFile: _openFilePreview,
-                                  onRetry: item.failed && !_isSending
-                                      ? () => _retryFailedMessage(item)
-                                      : null,
-                                  onFeedback:
-                                      item.role == ChatItemRole.assistant &&
-                                              item.seq != null &&
-                                              !item.pending
-                                          ? () => _showFeedbackSheet(item)
-                                          : null,
+                                child: _EntranceFade(
+                                  animate: isNewLast &&
+                                      !CcmMotion.reduceMotionOf(context),
+                                  child: _ChatBubble(
+                                    sessionId: widget.session.sessionId,
+                                    item: item,
+                                    animation: _assistantAnimations[item.id],
+                                    expanded:
+                                        _expandedMessageIds.contains(item.id),
+                                    onToggleExpanded: () =>
+                                        _toggleExpanded(item.id),
+                                    onOpenFile: _openFilePreview,
+                                    onRetry: item.failed && !_isSending
+                                        ? () => _retryFailedMessage(item)
+                                        : null,
+                                    onFeedback:
+                                        item.role == ChatItemRole.assistant &&
+                                                item.seq != null &&
+                                                !item.pending
+                                            ? () => _showFeedbackSheet(item)
+                                            : null,
+                                  ),
                                 ),
                               );
                             }
 
                             if (_pendingApproval != null) {
-                              return Padding(
-                                padding: const EdgeInsets.only(top: 12),
-                                child: ApprovalCard(
-                                  approval: _pendingApproval!,
-                                  isSubmitting: _isApproving,
-                                  onAction: _approve,
+                              final approvalId = _pendingApproval!.approvalId;
+                              final animateApproval =
+                                  !_animatedInIds.contains(approvalId) &&
+                                      !CcmMotion.reduceMotionOf(context);
+                              _animatedInIds.add(approvalId);
+                              return _EntranceFade(
+                                animate: animateApproval,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(top: 12),
+                                  child: ApprovalCard(
+                                    approval: _pendingApproval!,
+                                    isSubmitting: _isApproving,
+                                    onAction: _approve,
+                                  ),
                                 ),
                               );
                             }
@@ -1426,6 +1449,60 @@ class _HistoryLoader extends StatelessWidget {
           onPressed: isLoading ? null : onPressed,
         ),
       ),
+    );
+  }
+}
+
+/// One-shot entrance: fade + 8px slide-up, played once when [animate] is true
+/// on first build. Layout-neutral (Opacity + Transform.translate only), so it
+/// never moves heights or disturbs the list's scroll math.
+class _EntranceFade extends StatefulWidget {
+  const _EntranceFade({required this.child, required this.animate});
+
+  final Widget child;
+  final bool animate;
+
+  @override
+  State<_EntranceFade> createState() => _EntranceFadeState();
+}
+
+class _EntranceFadeState extends State<_EntranceFade>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+      value: widget.animate ? 0.0 : 1.0,
+    );
+    if (widget.animate) _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_controller.value == 1.0) return widget.child;
+    return AnimatedBuilder(
+      animation: _controller,
+      child: widget.child,
+      builder: (context, child) {
+        final t = Curves.easeOutCubic.transform(_controller.value);
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, 8 * (1 - t)),
+            child: child,
+          ),
+        );
+      },
     );
   }
 }

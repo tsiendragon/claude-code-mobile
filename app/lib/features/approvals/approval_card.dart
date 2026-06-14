@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/theme/ccm_motion.dart';
 import '../../core/theme/ccm_tokens.dart';
 import '../../core/theme/ccm_typography.dart';
 import '../../protocol/models.dart';
@@ -28,13 +29,23 @@ class _ApprovalCardState extends State<ApprovalCard>
   Timer? _expiryTimer;
   String? _pendingAction;
   DateTime _now = DateTime.now();
+  // The countdown window captured when this approval first appeared, so the
+  // expiry hairline drains from full regardless of when it was attached.
+  Duration _window = const Duration(seconds: 1);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _captureWindow();
     _restartExpiryTimer();
     _triggerAppearanceHaptic();
+  }
+
+  void _captureWindow() {
+    final remaining = widget.approval.expiresAt.difference(DateTime.now());
+    _window =
+        remaining > Duration.zero ? remaining : const Duration(seconds: 1);
   }
 
   @override
@@ -56,6 +67,7 @@ class _ApprovalCardState extends State<ApprovalCard>
             oldWidget.approval.contentHash != widget.approval.contentHash;
     if (approvalChanged) {
       _pendingAction = null;
+      _captureWindow();
       _triggerAppearanceHaptic();
     }
     if (approvalChanged ||
@@ -255,6 +267,28 @@ class _ApprovalCardState extends State<ApprovalCard>
               color: edgeColor,
               borderRadius: BorderRadiusDirectional.horizontal(
                 start: Radius.circular(tokens.radiusPanel),
+              ),
+            ),
+          ),
+        ),
+        PositionedDirectional(
+          start: 0,
+          end: 0,
+          bottom: 0,
+          child: ClipRRect(
+            borderRadius: BorderRadius.vertical(
+              bottom: Radius.circular(tokens.radiusPanel),
+            ),
+            child: SizedBox(
+              height: 2,
+              child: AnimatedFractionallySizedBox(
+                duration: CcmMotion.reduceMotionOf(context)
+                    ? Duration.zero
+                    : const Duration(seconds: 1),
+                alignment: Alignment.centerLeft,
+                widthFactor: (remaining.inMilliseconds / _window.inMilliseconds)
+                    .clamp(0.0, 1.0),
+                child: ColoredBox(color: edgeColor),
               ),
             ),
           ),
