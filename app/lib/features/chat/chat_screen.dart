@@ -324,40 +324,57 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     const SizedBox(height: 8),
                   ],
-                  Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'Attach image',
-                        icon: const Icon(Icons.add_photo_alternate_outlined),
-                        onPressed: canAttachImages ? _pickImage : null,
+                  // One tactile pill: attach + field + send read as a single
+                  // tool, the field borderless so the pill is the container.
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant,
                       ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: TextField(
-                          controller: _messageController,
-                          enabled: canSend,
-                          minLines: 1,
-                          maxLines: 5,
-                          decoration: InputDecoration(
-                            hintText: textFieldHint,
-                            border: const OutlineInputBorder(),
-                          ),
-                          onSubmitted: (_) => canSend ? _send() : null,
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          tooltip: 'Attach image',
+                          icon: const Icon(Icons.add_photo_alternate_outlined),
+                          onPressed: canAttachImages ? _pickImage : null,
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        tooltip: 'Send',
-                        icon: _isSending
-                            ? const SizedBox.square(
-                                dimension: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.send),
-                        onPressed: canSend ? _send : null,
-                      ),
-                    ],
+                        const SizedBox(width: 2),
+                        Expanded(
+                          child: TextField(
+                            controller: _messageController,
+                            enabled: canSend,
+                            minLines: 1,
+                            maxLines: 5,
+                            decoration: InputDecoration(
+                              hintText: textFieldHint,
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              isDense: true,
+                              contentPadding:
+                                  const EdgeInsets.symmetric(vertical: 10),
+                            ),
+                            onSubmitted: (_) => canSend ? _send() : null,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton.filled(
+                          tooltip: 'Send',
+                          icon: _isSending
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.send),
+                          onPressed: canSend ? _send : null,
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
