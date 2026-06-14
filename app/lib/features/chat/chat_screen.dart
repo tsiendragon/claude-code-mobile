@@ -7,6 +7,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:provider/provider.dart';
 
+import '../../core/theme/ccm_motion.dart';
 import '../../core/theme/ccm_tokens.dart';
 import '../../core/utils/format_utils.dart';
 import '../../protocol/client.dart';
@@ -208,24 +209,29 @@ class _ChatScreenState extends State<ChatScreen> {
                                 index - (_showHistoryHeader ? 1 : 0);
                             if (itemIndex < _items.length) {
                               final item = _items[itemIndex];
-                              return _ChatBubble(
+                              // RepaintBoundary so a streaming bubble's frequent
+                              // repaints don't dirty the rest of the list.
+                              return RepaintBoundary(
                                 key: ValueKey(item.id),
-                                sessionId: widget.session.sessionId,
-                                item: item,
-                                animation: _assistantAnimations[item.id],
-                                expanded: _expandedMessageIds.contains(item.id),
-                                onToggleExpanded: () =>
-                                    _toggleExpanded(item.id),
-                                onOpenFile: _openFilePreview,
-                                onRetry: item.failed && !_isSending
-                                    ? () => _retryFailedMessage(item)
-                                    : null,
-                                onFeedback:
-                                    item.role == ChatItemRole.assistant &&
-                                            item.seq != null &&
-                                            !item.pending
-                                        ? () => _showFeedbackSheet(item)
-                                        : null,
+                                child: _ChatBubble(
+                                  sessionId: widget.session.sessionId,
+                                  item: item,
+                                  animation: _assistantAnimations[item.id],
+                                  expanded:
+                                      _expandedMessageIds.contains(item.id),
+                                  onToggleExpanded: () =>
+                                      _toggleExpanded(item.id),
+                                  onOpenFile: _openFilePreview,
+                                  onRetry: item.failed && !_isSending
+                                      ? () => _retryFailedMessage(item)
+                                      : null,
+                                  onFeedback:
+                                      item.role == ChatItemRole.assistant &&
+                                              item.seq != null &&
+                                              !item.pending
+                                          ? () => _showFeedbackSheet(item)
+                                          : null,
+                                ),
                               );
                             }
 
@@ -365,6 +371,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _messageController.text.trim();
     final attachments = List<_PendingImageAttachment>.from(_pendingImages);
     if (text.isEmpty && attachments.isEmpty) return;
+    // Confirm the user's input with a light tap — fire-and-forget so the RPC
+    // dispatches on the same frame.
+    unawaited(HapticFeedback.lightImpact().catchError((Object _) {}));
     final currentState = (_session ?? widget.session).state;
     final useCommand = _pendingApproval != null ||
         currentState == SessionState.approval ||
@@ -1408,7 +1417,6 @@ class _HistoryLoader extends StatelessWidget {
 
 class _ChatBubble extends StatelessWidget {
   const _ChatBubble({
-    super.key,
     required this.sessionId,
     required this.item,
     this.animation,
@@ -1663,16 +1671,67 @@ class _FeedbackSheetState extends State<_FeedbackSheet> {
   }
 }
 
-class _PlainMessage extends StatelessWidget {
+/// The mid-stream rendering of an assistant message: plain text plus a blinking
+/// amber "liveWire" caret meaning the remote machine is still typing. Only
+/// built while the bubble is animating, so the caret disappears on its own when
+/// the message completes (the bubble re-renders as markdown). The 40ms stream
+/// loop is untouched — this is a sibling blink controller, fade-only.
+class _PlainMessage extends StatefulWidget {
   const _PlainMessage({required this.text});
 
   final String text;
 
   @override
+  State<_PlainMessage> createState() => _PlainMessageState();
+}
+
+class _PlainMessageState extends State<_PlainMessage>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _blink;
+
+  @override
+  void initState() {
+    super.initState();
+    _blink = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1060),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _blink.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return SelectableText(
-      text,
-      style: Theme.of(context).textTheme.bodyMedium,
+    final style = Theme.of(context).textTheme.bodyMedium;
+    final caretHeight = (style?.fontSize ?? 14) * 1.15;
+    final caret = Container(
+      width: 2,
+      height: caretHeight,
+      margin: const EdgeInsets.only(left: 1),
+      color: context.tokens.liveWire,
+    );
+    return Text.rich(
+      TextSpan(
+        style: style,
+        children: [
+          TextSpan(text: widget.text),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: CcmMotion.reduceMotionOf(context)
+                ? caret
+                : FadeTransition(
+                    opacity: Tween<double>(begin: 0.15, end: 1).animate(
+                      CurvedAnimation(parent: _blink, curve: Curves.easeInOut),
+                    ),
+                    child: caret,
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
