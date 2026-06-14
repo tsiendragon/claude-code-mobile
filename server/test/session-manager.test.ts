@@ -424,4 +424,51 @@ describe("SessionManager", () => {
     });
     expect(result.artifacts_missing).toBe(true);
   });
+
+  it("emits assistant_message when a reply first arrives via items (empty output) then settles into output", async () => {
+    // Regression: a fresh claude session's first reply ("OK") was never rendered.
+    // Race: an early poll captures the pane where parsed `items` already contain the
+    // assistant reply, but `extractLastResponse` (the `output`/lastResponse field) is
+    // still empty (idle ❯ prompt not yet settled). applySnapshot's items block persists
+    // the reply via replaceIfLonger WITHOUT emitting an event; the next poll's output
+    // block then finds the transcript tail already equals the assistant reply, so
+    // appendIfNewTail returns created:false and no assistant_message event is ever emitted.
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const workspaces = new WorkspaceService(cfg);
+    await workspaces.create("demo-app");
+
+    let pollCount = 0;
+    const ccc = {
+      runSession: async (name: string) =>
+        ({ ok: true, stdout: "", stderr: "", data: { name } } as const),
+      read: async () => {
+        pollCount += 1;
+        const items = [
+          { id: "hist_1", role: "user", text: "say OK" },
+          { id: "hist_2", role: "assistant", text: "OK" }
+        ];
+        // Poll 1: reply present in items, but output/lastResponse not yet extractable.
+        if (pollCount === 1) {
+          return { ok: true, stdout: "", stderr: "", data: { state: "ready", items } } as const;
+        }
+        // Poll 2+: settled frame — output now carries the reply too.
+        return { ok: true, stdout: "", stderr: "", data: { state: "ready", output: "OK", items } } as const;
+      }
+    } as unknown as CccClient;
+
+    const events = new InMemoryEventStore(50);
+    const manager = new SessionManager(cfg, ccc, workspaces, events);
+    const session = await manager.run({ name: "Demo", workspaceId: "demo-app" });
+
+    await manager.applySnapshot(session.sessionId); // poll 1: items only
+    await manager.applySnapshot(session.sessionId); // poll 2: output settles
+
+    const stored = events.listAfter(session.sessionId, 0);
+    const assistantEvents = (Array.isArray(stored) ? stored : []).filter(
+      (e) => e.event.kind === "assistant_message"
+    );
+    expect(assistantEvents.length).toBeGreaterThan(0);
+    expect((assistantEvents.at(-1)!.event as { text: string }).text).toContain("OK");
+  });
 });

@@ -29,3 +29,8 @@ cmdtools.zip
 .ccm-bridge/
 **/feedback/
 **/transcripts/
+
+# Playwright e2e artifacts / MCP scratch
+playwright-report/
+.playwright-mcp/
+test-results/

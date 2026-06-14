@@ -41,13 +41,32 @@ export class StatePoller {
       this.schedule(sessionId, session.state === "ready" ? this.baseIntervalMs * 3 : this.baseIntervalMs);
     } catch (error) {
       if (!this.timers.has(sessionId)) return;
+      const msg = error instanceof Error ? error.message : String(error);
+      // Permanent failures (session/server gone) — stop polling immediately
+      if (
+        msg.includes("no server running") ||
+        msg.includes("session not found") ||
+        msg.includes("SESSION_NOT_FOUND") ||
+        msg.includes("can't find session") ||
+        /No session ['"]/.test(msg)
+      ) {
+        this.stop(sessionId);
+        this.logger.warn("state_poll_stopped", { session_id: sessionId, reason: "permanent_failure", message: msg });
+        return;
+      }
       const count = (this.failures.get(sessionId) ?? 0) + 1;
       this.failures.set(sessionId, count);
       this.logger.warn("state_poll_failed", {
         session_id: sessionId,
         failures: count,
-        message: error instanceof Error ? error.message : String(error)
+        message: msg
       });
+      // After 5 consecutive failures, stop polling (session is likely dead)
+      if (count >= 5) {
+        this.stop(sessionId);
+        this.logger.warn("state_poll_stopped", { session_id: sessionId, reason: "too_many_failures", failures: count });
+        return;
+      }
       this.schedule(sessionId, this.baseIntervalMs * (count >= 3 ? 10 : 2));
     }
   }

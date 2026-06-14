@@ -353,10 +353,11 @@ export class SessionManager {
     const result = await this.ccc.read(session.cccName);
     if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
     this.updateState(session, result.data.state);
-    if (result.data.items && result.data.items.length > 0) {
-      this.transcriptItems.set(sessionId, result.data.items);
-      await this.transcripts.replaceIfLonger(session.cccName, transcriptInputs(result.data.items, "ccc_read"));
-    }
+    // Process output before items: claude's `lines` array includes the assistant message
+    // (⏺ marker is recognized), so replaceIfLonger would store it before appendIfNewTail
+    // sees it — causing appendIfNewTail to return created:false and suppress the event.
+    // By processing output first, appendIfNewTail runs against the pre-items transcript
+    // and correctly detects the new message.
     if (result.data.output) {
       const hash = createHash("sha256").update(normalizeSnapshot(result.data.output)).digest("hex");
       if (hash !== session.lastSnapshotHash) {
@@ -375,6 +376,38 @@ export class SessionManager {
             text: result.data.output,
             snapshot: true
           });
+        }
+      }
+    }
+    if (result.data.items && result.data.items.length > 0) {
+      this.transcriptItems.set(sessionId, result.data.items);
+      await this.transcripts.replaceIfLonger(session.cccName, transcriptInputs(result.data.items, "ccc_read"));
+      // A poll can capture a frame where the parsed `items` already contain the
+      // assistant reply but the `output`/lastResponse field is still empty (the idle
+      // ❯ prompt hasn't settled, so extractLastResponse returns nothing). In that case
+      // the block above persisted the reply via replaceIfLonger WITHOUT emitting an
+      // event, and the next poll's output block sees the transcript tail already equals
+      // the reply (appendIfNewTail → created:false), so no assistant_message ever fires
+      // and the reply never renders. Emit it here, deduped by the same snapshot hash so
+      // the later output-bearing poll does not double-emit.
+      if (!result.data.output) {
+        const replyText = lastAssistantText(result.data.items);
+        if (replyText) {
+          const hash = createHash("sha256").update(normalizeSnapshot(replyText)).digest("hex");
+          if (hash !== session.lastSnapshotHash) {
+            session.lastSnapshotHash = hash;
+            const tail = await this.transcripts.list(session.cccName, { limit: 1 });
+            const message = tail.items.at(-1);
+            if (message && message.role === "assistant") {
+              this.recordSnapshotArtifact(session, message.message_seq, result.stdout, result.data, replyText);
+              this.append(session, {
+                kind: "assistant_message",
+                messageId: message.id,
+                text: replyText,
+                snapshot: true
+              });
+            }
+          }
         }
       }
     }
@@ -806,6 +839,15 @@ function imageExtension(name: string, mime: string): string {
 
 function normalizeSnapshot(output: string): string {
   return output.replace(/\r/g, "").replace(/\d{1,2}:\d{2}:\d{2}/g, "<time>");
+}
+
+/** The text of the last non-empty assistant item, or undefined if none. */
+function lastAssistantText(items: CccTranscriptItem[] | undefined): string | undefined {
+  if (!items) return undefined;
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    if (items[i].role === "assistant" && items[i].text.trim().length > 0) return items[i].text;
+  }
+  return undefined;
 }
 
 function transcriptInputs(items: CccTranscriptItem[], source: TranscriptInput["source"]): TranscriptInput[] {
