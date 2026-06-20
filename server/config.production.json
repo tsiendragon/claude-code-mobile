@@ -5,7 +5,12 @@
   "workspace_root": "~/workspace",
   "allowed_paths": ["~/workspace", "~/apps"],
   "repos": [
-    { "name": "claude-code-mobile", "path": "~/apps/claude-code-mobile" }
+    { "name": "claude-code-mobile", "path": "~/apps/claude-code-mobile" },
+    { "name": "claude-code-connector", "path": "~/apps/claude-code-connector" },
+    { "name": "TAMart", "path": "~/apps/TAMart" },
+    { "name": "finnotev2", "path": "~/apps/finnotev2" },
+    { "name": "iterative-proof-engine", "path": "~/apps/iterative-proof-engine" },
+    { "name": "wg-admin", "path": "~/apps/wg-admin" }
   ],
   "allow_manual_cwd": true,
   "ccc_bin": "ccc",
