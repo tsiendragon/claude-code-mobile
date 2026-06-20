@@ -65,10 +65,13 @@ jobs:
           TAG: ${{ github.ref_name }}
           APK: build/app/outputs/flutter-apk/app-release.apk
         run: |
+          # Attach the APK under a versioned name, e.g. ccm-v0.1.35.apk
+          ARTIFACT="ccm-${TAG}.apk"
+          cp "$APK" "$ARTIFACT"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" "$ARTIFACT" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" "$APK" \
+            gh release create "$TAG" "$ARTIFACT" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$TAG" \
               --generate-notes
