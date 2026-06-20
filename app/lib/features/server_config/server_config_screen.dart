@@ -273,7 +273,7 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
       final profile = controller.profileFor(mode);
       final config = profile?.config;
       _drafts[mode] = _ConnectionDraft(
-        serverUrl: config?.serverUrl.toString() ?? '',
+        serverUrl: config?.serverUrl.toString() ?? _defaultServerUrl(mode),
         token: profile?.token ?? '',
         allowPrivateWs: config?.allowPrivateWs ?? false,
       );
@@ -390,10 +390,17 @@ class _SavedProfileChoices extends StatelessWidget {
   }
 }
 
+/// Pre-filled server URL when there is no saved profile for [mode]. Direct mode
+/// defaults to the public ccm endpoint so a fresh install can connect with just
+/// a token; the VPN modes have no sensible default address.
+String _defaultServerUrl(ConnectionMode mode) {
+  return mode == ConnectionMode.direct ? 'wss://ccm.tsien.space/ws' : '';
+}
+
 String _urlHint(ConnectionMode mode) {
   switch (mode) {
     case ConnectionMode.direct:
-      return 'wss://ccm.example.com/ws';
+      return 'wss://ccm.tsien.space/ws';
     case ConnectionMode.tailscale:
       return 'ws://100.67.213.108:8900/ws';
     case ConnectionMode.wireguard:

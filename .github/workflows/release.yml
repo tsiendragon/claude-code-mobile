@@ -57,21 +57,27 @@ jobs:
           CCM_ANDROID_STORE_PASSWORD: ${{ secrets.CCM_ANDROID_STORE_PASSWORD }}
           CCM_ANDROID_KEY_ALIAS: ${{ secrets.CCM_ANDROID_KEY_ALIAS }}
           CCM_ANDROID_KEY_PASSWORD: ${{ secrets.CCM_ANDROID_KEY_PASSWORD }}
-        run: flutter build apk --release
+        run: flutter build apk --release --split-per-abi
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-          APK: build/app/outputs/flutter-apk/app-release.apk
         run: |
-          # Attach the APK under a versioned name, e.g. ccm-v0.1.35.apk
-          ARTIFACT="ccm-${TAG}.apk"
-          cp "$APK" "$ARTIFACT"
+          # Split-per-ABI keeps each download small (~20MB vs ~52MB universal).
+          # Attach each arch under a versioned name, e.g. ccm-v0.1.36-arm64-v8a.apk
+          OUT=build/app/outputs/flutter-apk
+          ARTIFACTS=()
+          for arch in arm64-v8a armeabi-v7a x86_64; do
+            src="$OUT/app-${arch}-release.apk"
+            dst="ccm-${TAG}-${arch}.apk"
+            cp "$src" "$dst"
+            ARTIFACTS+=("$dst")
+          done
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ARTIFACT" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" "${ARTIFACTS[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" "$ARTIFACT" \
+            gh release create "$TAG" "${ARTIFACTS[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$TAG" \
               --generate-notes
