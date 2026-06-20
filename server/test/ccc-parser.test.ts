@@ -323,6 +323,27 @@ describe("ccc parser", () => {
     );
   });
 
+  // Regression: a plain numbered list in an assistant reply (no ❯/› cursor) must
+  // NOT be mistaken for a live selection menu. This produced an endless re-prompt
+  // loop — the user picked an option, the assistant answered with more numbered
+  // text, and the bridge re-opened the "choice" every poll.
+  it("does not treat a cursor-less numbered list as a choice prompt", () => {
+    const read = parseCccRead(JSON.stringify({
+      state: "ready",
+      lines: [
+        "● Here are a few options to consider:",
+        "  1. Run the migration now",
+        "  2. Schedule it for tonight",
+        "  3. Skip it",
+        "",
+        "❯ "
+      ]
+    }));
+
+    expect(read.state).toBe("ready");
+    expect(read.pendingApproval).toBeUndefined();
+  });
+
   // Regression captured live via the web console + Playwright: `ccc read --json` returns
   // a full-screen pane dump where stale output (a prior "count to 200" reply) sits above
   // the live approval prompt. The title scan used to grab the first non-numbered line in

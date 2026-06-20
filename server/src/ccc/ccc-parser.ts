@@ -123,17 +123,24 @@ function parseChoicePrompt(linesInput: unknown, output: string | undefined): Ccc
   // The selected option in Claude Code is prefixed with ❯ (U+276F); codex uses › (U+203A).
   // Both (and a plain >) must be tolerated, otherwise the currently-highlighted choice is dropped.
   const choiceRe = /^\s*(?:[›>❯]\s*)?(\d{1,2})[.)]\s+(.+?)\s*$/u;
+  // A live Claude Code (❯) / codex (›) selection menu highlights its current
+  // option with a cursor glyph. Plain numbered lists in assistant prose have no
+  // cursor — without this signal they were mistaken for a choice menu, so every
+  // numbered reply re-opened the prompt in an endless tap loop.
+  const cursorRe = /^\s*[›❯]\s*\d{1,2}[.)]\s+/u;
   const choices: { value: string; label: string }[] = [];
   let firstChoiceIndex = -1;
+  let hasCursor = false;
   cleanedLines.forEach((line, index) => {
     const match = line.match(choiceRe);
     if (!match) return;
     const label = match[2].replace(/\s+/g, " ").trim();
     if (label.length === 0) return;
+    if (cursorRe.test(line)) hasCursor = true;
     if (firstChoiceIndex === -1) firstChoiceIndex = index;
     choices.push({ value: match[1], label });
   });
-  if (choices.length < 2) return undefined;
+  if (choices.length < 2 || !hasCursor) return undefined;
 
   // The prompt question sits immediately above the choices. Scanning the whole pane
   // would wrongly pick up stale output left higher in the terminal capture (e.g. the
