@@ -50,6 +50,30 @@ describe("TranscriptStore", () => {
     expect(latest.items.map((item) => item.text)).toEqual(["older prompt", "older response"]);
   });
 
+  it("extends a mid-render assistant stub in place instead of duplicating it", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-transcripts-"));
+    const store = new TranscriptStore(root);
+
+    const stub = await store.appendIfNewTail("demo-session", {
+      role: "assistant",
+      text: "给你梳理一下进度:\n背景",
+      source: "event"
+    });
+    expect(stub.created).toBe(true);
+
+    const full = await store.appendIfNewTail("demo-session", {
+      role: "assistant",
+      text: "给你梳理一下进度:\n背景\n你反馈了渲染问题,已修复。",
+      source: "event"
+    });
+    // same bubble extended (same id), not a second message
+    expect(full.message.id).toBe(stub.message.id);
+
+    const latest = await store.list("demo-session");
+    expect(latest.items).toHaveLength(1);
+    expect(latest.items[0].text).toContain("你反馈了渲染问题");
+  });
+
   it("repairs previously imported terminal chrome even when the cleaned history is shorter", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ccm-transcripts-"));
     const store = new TranscriptStore(root);

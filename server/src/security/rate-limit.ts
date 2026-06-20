@@ -32,8 +32,10 @@ export class AuthFailureTracker {
   private readonly failures = new Map<string, { count: number; blockedUntil?: number }>();
 
   constructor(
-    private readonly maxFailures = 5,
-    private readonly cooldownMs = 30 * 60 * 1000,
+    // A mistyped token shouldn't lock a client out for long. Allow more attempts
+    // and recover after a couple of minutes (a successful auth clears it sooner).
+    private readonly maxFailures = 10,
+    private readonly cooldownMs = 2 * 60 * 1000,
     private readonly now = () => Date.now()
   ) {}
 

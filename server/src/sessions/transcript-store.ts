@@ -36,10 +36,32 @@ export class TranscriptStore {
   async appendIfNewTail(cccName: string, input: TranscriptInput): Promise<{ message: TranscriptMessage; created: boolean }> {
     const text = input.text.trim();
     if (text.length === 0) throw new Error("TRANSCRIPT_EMPTY");
-    const latest = await this.list(cccName, { limit: 1 });
-    const tail = latest.items.at(-1);
-    if (tail && tail.role === input.role && normalizeText(tail.text) === normalizeText(text)) {
-      return { message: tail, created: false };
+    const all = await this.readAll(cccName);
+    const tail = all.at(-1);
+    if (tail && tail.role === input.role) {
+      const tailNorm = normalizeText(tail.text);
+      const incomingNorm = normalizeText(text);
+      if (tailNorm === incomingNorm) {
+        return { message: tail, created: false };
+      }
+      // A poll can capture the same streaming reply at different completeness
+      // (a mid-render stub then the full text). One normalizes to a prefix of
+      // the other — keep the longer in place instead of storing both, so the
+      // reply renders once. Only assistant turns stream like this.
+      if (
+        input.role === "assistant" &&
+        (incomingNorm.startsWith(tailNorm) || tailNorm.startsWith(incomingNorm))
+      ) {
+        if (text.length <= tail.text.length) {
+          return { message: tail, created: false };
+        }
+        const updated: TranscriptMessage = { ...tail, text };
+        all[all.length - 1] = updated;
+        await this.writeAll(cccName, all);
+        // created:true so the same-id assistant_message event re-fires and the
+        // client merges the fuller text into the existing bubble.
+        return { message: updated, created: true };
+      }
     }
     const message = await this.append(cccName, { ...input, text });
     return { message, created: true };

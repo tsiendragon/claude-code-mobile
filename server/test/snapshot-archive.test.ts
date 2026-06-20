@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { SnapshotArchive } from "../src/sessions/snapshot-archive.js";
 import type { CccReadResult } from "../src/ccc/ccc-types.js";
@@ -28,5 +31,19 @@ describe("SnapshotArchive", () => {
     expect(archive.get("demo", 1)).toBeUndefined();
     expect(archive.get("demo", 2)?.renderText).toBe("two");
     expect(archive.get("demo", 3)?.renderText).toBe("three");
+  });
+
+  it("survives a restart via the on-disk mirror", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "ccm-snap-"));
+    const archive = new SnapshotArchive(200, dir);
+    archive.record("demo", 7, artifact("persist me"));
+    // allow the best-effort async disk write to land
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // a fresh instance (as after a bridge restart) has empty memory
+    const restarted = new SnapshotArchive(200, dir);
+    expect(restarted.get("demo", 7)).toBeUndefined();
+    expect((await restarted.lookup("demo", 7))?.renderText).toBe("persist me");
+    expect(await restarted.lookup("demo", 8)).toBeUndefined();
   });
 });

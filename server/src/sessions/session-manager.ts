@@ -1,5 +1,5 @@
 import { randomBytes, createHash } from "node:crypto";
-import { mkdir, open, opendir, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, opendir, readdir, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import type { BridgeConfig } from "../config.js";
@@ -55,7 +55,7 @@ export class SessionManager {
     private readonly workspaces: WorkspaceService,
     private readonly events: InMemoryEventStore,
     private readonly transcripts: TranscriptStore = new TranscriptStore(config.dataDir),
-    private readonly snapshots: SnapshotArchive = new SnapshotArchive(),
+    private readonly snapshots: SnapshotArchive = new SnapshotArchive(200, config.dataDir),
     private readonly feedback: FeedbackStore = new FeedbackStore(config.dataDir)
   ) {}
 
@@ -245,6 +245,7 @@ export class SessionManager {
     const finalBuffer = await resizeImageIfNeeded(rawBuffer, upload.mime);
     await writeFile(filePath, finalBuffer);
     this.imageUploads.delete(uploadId);
+    await pruneUploadDir(realUploadDir, 50);
     const info = await stat(filePath);
     return { file: fileMetadata(filePath, session.cwd, info.size) };
   }
@@ -464,7 +465,7 @@ export class SessionManager {
 
   async submitFeedback(sessionId: string, input: FeedbackInput): Promise<{ feedback_id: string; artifacts_missing: boolean }> {
     const session = this.requireSession(sessionId);
-    const snapshot = this.snapshots.get(session.cccName, input.messageSeq);
+    const snapshot = await this.snapshots.lookup(session.cccName, input.messageSeq);
     const fallbackRenderText = snapshot ? undefined : await this.lookupRenderText(session, input.messageSeq);
     const record: FeedbackRecord = {
       feedback_id: `fb_${randomBytes(10).toString("base64url")}`,
@@ -852,6 +853,33 @@ function imageExtension(name: string, mime: string): string {
       return ".webp";
     default:
       return ".img";
+  }
+}
+
+// Uploaded images pile up in <cwd>/.ccm-mobile/uploads forever. Keep only the
+// most recent `keep` files so a long-lived session's repo doesn't accumulate
+// unbounded attachments. Best-effort: never throw into the upload flow.
+async function pruneUploadDir(dir: string, keep: number): Promise<void> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+    if (files.length <= keep) return;
+    const stamped = await Promise.all(
+      files.map(async (name) => {
+        const full = path.join(dir, name);
+        try {
+          return { full, mtime: (await stat(full)).mtimeMs };
+        } catch {
+          return { full, mtime: 0 };
+        }
+      })
+    );
+    stamped.sort((a, b) => a.mtime - b.mtime); // oldest first
+    for (const victim of stamped.slice(0, stamped.length - keep)) {
+      await unlink(victim.full).catch(() => undefined);
+    }
+  } catch {
+    // ignore prune failures
   }
 }
 
