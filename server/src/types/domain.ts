@@ -35,6 +35,22 @@ export type ApprovalRecord = {
   status: "pending" | "approved" | "rejected" | "expired" | "interrupted";
 };
 
+// Snake_case wire form of an approval, matching the app's protocol field names.
+export type SerializedApproval = {
+  approval_id: string;
+  session_id: string;
+  operation_kind: ApprovalRecord["operationKind"];
+  description: string;
+  paths: string[];
+  diff_summary?: string;
+  content_hash: string;
+  actions: ApprovalAction[];
+  choices?: ApprovalChoice[];
+  scope?: ApprovalScope;
+  expires_at: string;
+  status: ApprovalRecord["status"];
+};
+
 export type SessionCapabilities = {
   canSendWhenThinking: boolean;
   canSendWhenError: boolean;
@@ -63,7 +79,7 @@ export type DomainEvent =
   | { kind: "message_delivered"; clientMsgId: string }
   | { kind: "message_failed"; clientMsgId: string; code: string; message: string }
   | { kind: "assistant_message"; messageId?: string; text: string; snapshot?: boolean }
-  | { kind: "approval_requested"; approval: ApprovalRecord }
+  | { kind: "approval_requested"; approval: SerializedApproval }
   | { kind: "approval_resolved"; approvalId: string; status: ApprovalRecord["status"] }
   | { kind: "session_ended" };
 

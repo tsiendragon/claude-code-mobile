@@ -886,8 +886,13 @@ class PendingApproval {
               .where((choice) => choice.value.isNotEmpty)
               .toList() ??
           const <ApprovalChoice>[],
-      expiresAt: DateTime.tryParse(json['expires_at'] as String? ?? '') ??
-          DateTime.now().toUtc(),
+      // Accept snake_case or camelCase; fall back to a future time (not now) so
+      // a missing/mis-keyed timestamp never renders the card as instantly
+      // expired and disables its buttons.
+      expiresAt: DateTime.tryParse(
+            (json['expires_at'] ?? json['expiresAt']) as String? ?? '',
+          ) ??
+          DateTime.now().add(const Duration(minutes: 10)),
       diffSummary:
           json['diff_summary'] as String? ?? json['diffSummary'] as String?,
       contentHash:

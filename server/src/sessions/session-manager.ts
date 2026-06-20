@@ -6,7 +6,7 @@ import type { BridgeConfig } from "../config.js";
 import type { CccClient } from "../ccc/ccc-client.js";
 import type { CccReadResult, CccTranscriptItem } from "../ccc/ccc-types.js";
 import { assertAllowedCwd, isPathInside } from "../security/paths.js";
-import type { ApprovalAction, ApprovalRecord, SessionBackend, SessionRecord, SessionState } from "../types/domain.js";
+import type { ApprovalAction, ApprovalRecord, SerializedApproval, SessionBackend, SessionRecord, SessionState } from "../types/domain.js";
 import type { FeedbackVerdict, SessionSummary } from "../types/protocol.js";
 import type { WorkspaceService } from "../workspaces/workspace-service.js";
 import { InMemoryEventStore } from "./event-store.js";
@@ -125,7 +125,7 @@ export class SessionManager {
         next_before: transcriptPage.next_before
       },
       recent_events: Array.isArray(recent) ? recent : [],
-      pending_approval: session.pendingApproval
+      pending_approval: session.pendingApproval ? serializeApproval(session.pendingApproval) : undefined
     };
   }
 
@@ -419,7 +419,7 @@ export class SessionManager {
       const existing = session.pendingApproval;
       if (!existing || existing.contentHash !== result.data.pendingApproval.contentHash) {
         session.pendingApproval = createApproval(session.sessionId, result.data.pendingApproval);
-        this.append(session, { kind: "approval_requested", approval: session.pendingApproval });
+        this.append(session, { kind: "approval_requested", approval: serializeApproval(session.pendingApproval) });
       }
     } else if (session.pendingApproval?.status === "pending" && session.state !== "approval" && session.state !== "choosing") {
       const staleApprovalId = session.pendingApproval.approvalId;
@@ -862,6 +862,26 @@ function transcriptInputs(items: CccTranscriptItem[], source: TranscriptInput["s
     snapshot: item.snapshot,
     source
   }));
+}
+
+// Approvals cross the wire as snake_case so the app's primary field names match
+// (the app only reads `expires_at`; a camelCase leak made every card render as
+// already-expired and disabled its buttons).
+function serializeApproval(approval: ApprovalRecord): SerializedApproval {
+  return {
+    approval_id: approval.approvalId,
+    session_id: approval.sessionId,
+    operation_kind: approval.operationKind,
+    description: approval.description,
+    paths: approval.paths,
+    diff_summary: approval.diffSummary,
+    content_hash: approval.contentHash,
+    actions: approval.actions,
+    choices: approval.choices,
+    scope: approval.scope,
+    expires_at: approval.expiresAt,
+    status: approval.status
+  };
 }
 
 function createApproval(

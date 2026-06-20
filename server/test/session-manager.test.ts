@@ -364,6 +364,52 @@ describe("SessionManager", () => {
     expect(page.items.map((item) => item.text)).toEqual(["first response", "second prompt"]);
   });
 
+  it("serializes a pending approval with snake_case expires_at on attach", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
+    const cfg = config(root);
+    const workspaces = new WorkspaceService(cfg);
+    await workspaces.create("demo-app");
+    const ccc = {
+      runSession: async (name: string) =>
+        ({ ok: true, stdout: "", stderr: "", data: { name } }) as const,
+      history: async () => ({ ok: true, stdout: "", stderr: "", data: [] }) as const,
+      read: async () =>
+        ({
+          ok: true,
+          stdout: "",
+          stderr: "",
+          data: {
+            state: "choosing",
+            output: "",
+            items: [],
+            pendingApproval: {
+              operationKind: "choice",
+              description: "Pick an option",
+              paths: [],
+              contentHash: "hash-1",
+              actions: ["choice"],
+              choices: [
+                { value: "1", label: "Yes" },
+                { value: "2", label: "No" }
+              ]
+            }
+          }
+        }) as const
+    } as unknown as CccClient;
+
+    const manager = new SessionManager(cfg, ccc, workspaces, new InMemoryEventStore(20));
+    const session = await manager.run({ name: "Choose", workspaceId: "demo-app" });
+    const attached = await manager.attach(session.sessionId);
+
+    const approval = attached.pending_approval as Record<string, unknown> | undefined;
+    expect(approval).toBeDefined();
+    expect(typeof approval!.expires_at).toBe("string");
+    // expiry is in the future (not instantly expired) and snake_case-only.
+    expect(new Date(approval!.expires_at as string).getTime()).toBeGreaterThan(Date.now());
+    expect(approval!.approval_id).toEqual(expect.stringMatching(/^appr_/));
+    expect("expiresAt" in approval!).toBe(false);
+  });
+
   it("captures badcase artifacts on snapshot and attaches them to feedback", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ccm-sessions-"));
     const cfg = config(root);
