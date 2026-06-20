@@ -341,10 +341,11 @@ describe("ccc parser", () => {
     const read = parseCccRead(JSON.stringify({ state: "ready", output }));
 
     expect(read.output).toContain("好,后端更新了");
-    expect(read.output).toContain("Bash(echo");
-    expect(read.output).toContain("render check");
     expect(read.output).toContain("上面这条带正文");
     expect(read.state).toBe("ready");
+    // the Bash tool block is fenced so the app renders it monospace, not as prose
+    expect(read.output).toContain("```\nBash(echo");
+    expect(read.output).toContain("⎿  render check");
   });
 
   // Regression: a snapshot frame often captures the live prompt + animated status

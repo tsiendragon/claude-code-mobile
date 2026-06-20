@@ -111,7 +111,7 @@ function extractLatestAssistantResponse(raw: string): string | undefined {
   const turn = items
     .slice(lastUserIndex + 1)
     .filter((item) => item.role === "assistant" && item.text.trim().length > 0)
-    .map((item) => item.text);
+    .map((item) => fenceCommandBlock(item.text));
   if (turn.length > 0) {
     const stripped = stripTrailingChrome(turn.join("\n\n"));
     if (stripped.length > 0) return stripped;
@@ -120,6 +120,20 @@ function extractLatestAssistantResponse(raw: string): string | undefined {
   if (fallback === undefined) return undefined;
   const stripped = stripTrailingChrome(fallback);
   return stripped.length > 0 ? stripped : undefined;
+}
+
+// Claude tool/command bullets ("Bash(…)" + "⎿ output") are terminal chrome, not
+// prose. Wrap them in a fenced code block so the app renders them monospace
+// instead of reflowing them as a paragraph (which looked broken).
+function fenceCommandBlock(text: string): string {
+  if (text.startsWith("```")) return text; // already fenced
+  const firstLine = text.split("\n", 1)[0]?.trim() ?? "";
+  const looksLikeToolCall = /^[A-Z][\w.-]*\(/u.test(firstLine);
+  const hasToolOutput = /^\s*⎿/mu.test(text);
+  if (looksLikeToolCall || hasToolOutput) {
+    return `\`\`\`\n${text}\n\`\`\``;
+  }
+  return text;
 }
 
 // A snapshot can capture the live prompt below the reply: the empty ❯ prompt,
