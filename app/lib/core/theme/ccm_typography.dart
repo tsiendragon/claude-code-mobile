@@ -16,8 +16,10 @@ class CcmTypography extends ThemeExtension<CcmTypography> {
   factory CcmTypography.standard() =>
       const CcmTypography(monoFamily: 'JetBrainsMono');
 
-  /// Base monospace [TextStyle]; callers `copyWith` size/colour.
-  TextStyle get mono => TextStyle(fontFamily: monoFamily);
+  /// Base monospace [TextStyle]; callers `copyWith` size/colour. CJK glyphs
+  /// (absent from JetBrains Mono) fall back to the bundled sans Noto Sans SC.
+  TextStyle get mono =>
+      TextStyle(fontFamily: monoFamily, fontFamilyFallback: const ['NotoSansSC']);
 
   /// Tabular, slashed-zero figures for in-place numeric instruments
   /// (countdowns, metrics, byte sizes) so they never re-layout on update.

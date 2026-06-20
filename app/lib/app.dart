@@ -79,6 +79,9 @@ class _CcmAppState extends State<CcmApp> with WidgetsBindingObserver {
       colorScheme: scheme,
       useMaterial3: true,
       fontFamily: 'Inter',
+      // Inter has no CJK glyphs; fall back to bundled sans Noto Sans SC so
+      // Chinese renders sans-serif instead of the device's serif default.
+      fontFamilyFallback: const ['NotoSansSC'],
       scaffoldBackgroundColor: scheme.surface,
       extensions: <ThemeExtension<dynamic>>[
         tokens,
