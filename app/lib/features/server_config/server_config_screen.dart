@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/config/server_config.dart';
@@ -209,6 +210,8 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
                 ],
               ),
             ),
+            const SizedBox(height: 24),
+            const _AppVersionFooter(),
           ],
         ),
       ),
@@ -395,6 +398,57 @@ String _urlHint(ConnectionMode mode) {
       return 'ws://100.67.213.108:8900/ws';
     case ConnectionMode.wireguard:
       return 'ws://10.8.0.1:8900/ws';
+  }
+}
+
+class _AppVersionFooter extends StatefulWidget {
+  const _AppVersionFooter();
+
+  @override
+  State<_AppVersionFooter> createState() => _AppVersionFooterState();
+}
+
+class _AppVersionFooterState extends State<_AppVersionFooter> {
+  late final Future<PackageInfo> _infoFuture = PackageInfo.fromPlatform();
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
+    final style = Theme.of(context).textTheme.bodySmall?.copyWith(color: color);
+    return FutureBuilder<PackageInfo>(
+      future: _infoFuture,
+      builder: (context, snapshot) {
+        final info = snapshot.data;
+        final label = info == null
+            ? 'Version …'
+            : '${info.appName} v${info.version} (build ${info.buildNumber})';
+        return Center(
+          child: InkWell(
+            onTap: info == null ? null : () => _copy(label),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.info_outline, size: 14, color: color),
+                  const SizedBox(width: 6),
+                  Text(label, style: style),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _copy(String label) async {
+    await Clipboard.setData(ClipboardData(text: label));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Version copied')),
+    );
   }
 }
 
