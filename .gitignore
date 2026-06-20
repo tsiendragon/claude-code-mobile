@@ -37,3 +37,6 @@ cmdtools.zip
 playwright-report/
 .playwright-mcp/
 test-results/
+
+# Deployment config — machine-specific host/paths; use config.example.json as the template
+server/config.production.json
