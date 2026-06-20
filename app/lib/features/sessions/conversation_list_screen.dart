@@ -571,81 +571,99 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
                           ),
                           const SizedBox(height: 18),
                         ],
-                        _sectionLabel(context, 'AGENT'),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            for (final backend in _availableBackends)
-                              ChoiceChip(
-                                avatar: Icon(_backendIcon(backend), size: 16),
-                                label: Text(sessionBackendLabel(backend)),
-                                selected: _selectedBackend == backend,
-                                onSelected: _isSubmitting
-                                    ? null
-                                    : (_) {
-                                        setState(
-                                          () => _selectedBackend = backend,
-                                        );
-                                      },
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 18),
-                        _sectionLabel(context, 'LOCATION'),
-                        if (_isLoadingWorkspaces)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 10),
-                            child: LinearProgressIndicator(),
-                          )
-                        else
-                          _buildTargetField(),
-                        const SizedBox(height: 18),
-                        _sectionLabel(context, 'DETAILS'),
-                        TextFormField(
-                          controller: _sessionNameController,
-                          style: theme.textTheme.bodyMedium,
-                          decoration: const InputDecoration(
-                            labelText: 'Session name (optional)',
-                            prefixIcon: Icon(Icons.terminal, size: 18),
-                          ),
-                          validator: (value) {
-                            final text = (value ?? '').trim();
-                            if (text.length > 80) {
-                              return 'Use 80 characters or fewer.';
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 8),
-                        ExpansionTile(
-                          tilePadding: EdgeInsets.zero,
-                          childrenPadding: EdgeInsets.zero,
-                          title: const Text('Advanced options'),
-                          children: [
-                            SwitchListTile(
-                              contentPadding: EdgeInsets.zero,
-                              dense: true,
-                              title: Text(
-                                'Skip permission prompts',
-                                style: theme.textTheme.bodyMedium,
-                              ),
-                              subtitle: Text(
-                                'Runs with --dangerously-skip-permissions',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurfaceVariant,
+                        _SectionCard(
+                          icon: Icons.smart_toy_outlined,
+                          title: 'Agent',
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final backend in _availableBackends)
+                                ChoiceChip(
+                                  avatar:
+                                      Icon(_backendIcon(backend), size: 16),
+                                  label: Text(sessionBackendLabel(backend)),
+                                  selected: _selectedBackend == backend,
+                                  onSelected: _isSubmitting
+                                      ? null
+                                      : (_) {
+                                          setState(
+                                            () => _selectedBackend = backend,
+                                          );
+                                        },
                                 ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _SectionCard(
+                          icon: Icons.folder_open,
+                          title: 'Location',
+                          child: _isLoadingWorkspaces
+                              ? const Padding(
+                                  padding:
+                                      EdgeInsets.symmetric(vertical: 10),
+                                  child: LinearProgressIndicator(),
+                                )
+                              : _buildTargetField(),
+                        ),
+                        const SizedBox(height: 12),
+                        _SectionCard(
+                          icon: Icons.tune,
+                          title: 'Details',
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              TextFormField(
+                                controller: _sessionNameController,
+                                style: theme.textTheme.bodyMedium,
+                                decoration: const InputDecoration(
+                                  labelText: 'Session name (optional)',
+                                  prefixIcon: Icon(Icons.terminal, size: 18),
+                                ),
+                                validator: (value) {
+                                  final text = (value ?? '').trim();
+                                  if (text.length > 80) {
+                                    return 'Use 80 characters or fewer.';
+                                  }
+                                  return null;
+                                },
                               ),
-                              value: _skipPermissions,
-                              onChanged: _isSubmitting
-                                  ? null
-                                  : (value) {
-                                      setState(
-                                        () => _skipPermissions = value,
-                                      );
-                                    },
-                            ),
-                          ],
+                              ExpansionTile(
+                                tilePadding: EdgeInsets.zero,
+                                childrenPadding: EdgeInsets.zero,
+                                shape: const Border(),
+                                collapsedShape: const Border(),
+                                title: const Text('Advanced options'),
+                                children: [
+                                  SwitchListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    dense: true,
+                                    title: Text(
+                                      'Skip permission prompts',
+                                      style: theme.textTheme.bodyMedium,
+                                    ),
+                                    subtitle: Text(
+                                      'Runs with --dangerously-skip-permissions',
+                                      style:
+                                          theme.textTheme.bodySmall?.copyWith(
+                                        color:
+                                            theme.colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                    value: _skipPermissions,
+                                    onChanged: _isSubmitting
+                                        ? null
+                                        : (value) {
+                                            setState(
+                                              () => _skipPermissions = value,
+                                            );
+                                          },
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                         if (_error != null) ...[
                           const SizedBox(height: 8),
@@ -717,23 +735,6 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _sectionLabel(BuildContext context, String text) {
-    // Sans-serif (Inter) for comfortable reading — monospace is reserved for
-    // actual code/command/diff blocks, not UI chrome.
-    return Padding(
-      padding: const EdgeInsets.only(top: 2, bottom: 8),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 11,
-          letterSpacing: 1.4,
-          fontWeight: FontWeight.w600,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
     );
@@ -1160,6 +1161,53 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
   String _workspaceNamePreview() {
     final text = _workspaceNameController.text.trim();
     return text.isEmpty ? '<project>' : text;
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.icon,
+    required this.title,
+    required this.child,
+  });
+
+  final IconData icon;
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
   }
 }
 
