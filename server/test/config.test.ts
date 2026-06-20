@@ -51,6 +51,41 @@ describe("loadConfig", () => {
     expect(config.tokenEnv).toBe("CCM_TEST_TOKEN");
   });
 
+  it("parses repos, derives ids/names, and expands ~", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "ccm-config-"));
+    const repoDir = path.join(dir, "my-repo");
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      token: "c".repeat(32),
+      workspace_root: dir,
+      allowed_paths: [dir],
+      repos: [
+        { name: "My Repo", path: repoDir },
+        repoDir
+      ]
+    }));
+
+    const config = await loadConfig(configPath);
+
+    expect(config.repos).toEqual([
+      { id: "my-repo", name: "My Repo", path: repoDir },
+      { id: "my-repo-2", name: "my-repo", path: repoDir }
+    ]);
+  });
+
+  it("rejects repos outside the allowed paths", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "ccm-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      token: "c".repeat(32),
+      workspace_root: dir,
+      allowed_paths: [dir],
+      repos: [{ name: "outside", path: "/etc/somewhere" }]
+    }));
+
+    await expect(loadConfig(configPath)).rejects.toThrow(/inside an allowed_paths/);
+  });
+
   it("defaults allowed paths to workspace root and home apps", async () => {
     process.env.CCM_TOKEN = "t".repeat(32);
     const dir = await mkdtemp(path.join(os.tmpdir(), "ccm-config-"));

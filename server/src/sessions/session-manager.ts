@@ -105,6 +105,10 @@ export class SessionManager {
     return this.workspaces.create(name);
   }
 
+  listRepos() {
+    return this.config.repos.map((repo) => ({ id: repo.id, name: repo.name, path: repo.path }));
+  }
+
   async attach(sessionId: string) {
     const initialSession = this.requireSession(sessionId);
     await this.refreshTranscriptFromHistory(initialSession);

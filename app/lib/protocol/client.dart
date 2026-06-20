@@ -191,6 +191,17 @@ class BridgeClient extends ChangeNotifier {
     throw const BridgeException('Bridge did not return a workspace.');
   }
 
+  Future<List<RepoSummary>> listRepos() async {
+    final data = await request('repo.list');
+    final rawRepos = data['repos'];
+    if (rawRepos is! List) return const [];
+
+    return rawRepos
+        .whereType<Map>()
+        .map((raw) => RepoSummary.fromJson(Map<String, Object?>.from(raw)))
+        .toList();
+  }
+
   Future<SystemStats> getSystemStats() async {
     final data = await request('system.stats');
     return SystemStats.fromJson(data);

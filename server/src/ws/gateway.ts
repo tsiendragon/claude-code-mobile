@@ -147,6 +147,9 @@ export class WsGateway {
         case "workspace.create":
           this.send(socket, ok(request.id, { workspace: await this.sessions.createWorkspace(String(request.name)) }));
           break;
+        case "repo.list":
+          this.send(socket, ok(request.id, { repos: this.sessions.listRepos() }));
+          break;
         case "session.list":
           this.send(socket, ok(request.id, { sessions: await this.sessions.list() }));
           break;

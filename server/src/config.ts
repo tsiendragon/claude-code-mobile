@@ -4,6 +4,12 @@ import path from "node:path";
 import type { LogLevel } from "./logger.js";
 import { expandHome } from "./security/paths.js";
 
+export type RepoConfig = {
+  id: string;
+  name: string;
+  path: string;
+};
+
 export type BridgeConfig = {
   host: string;
   port: number;
@@ -11,6 +17,7 @@ export type BridgeConfig = {
   tokenSource: "config" | "env" | "generated";
   token: string;
   allowedPaths: string[];
+  repos: RepoConfig[];
   workspaceRoot: string;
   dataDir: string;
   allowManualCwd: boolean;
@@ -34,6 +41,7 @@ type RawConfig = {
   token?: string;
   token_env?: string;
   allowed_paths?: string[];
+  repos?: Array<{ name?: string; path: string } | string>;
   workspace_root?: string;
   data_dir?: string;
   allow_manual_cwd?: boolean;
@@ -63,6 +71,7 @@ export async function loadConfig(configPath?: string): Promise<BridgeConfig> {
     ? raw.allowed_paths.map(expandHome)
     : uniquePaths([workspaceRoot, "~/apps"]);
   const dataDir = expandHome(raw.data_dir ?? process.env.CCM_DATA_DIR ?? "~/.ccm-bridge");
+  const repos = parseRepos(raw.repos);
 
   const config: BridgeConfig = {
     host: raw.host ?? process.env.CCM_HOST ?? "127.0.0.1",
@@ -71,6 +80,7 @@ export async function loadConfig(configPath?: string): Promise<BridgeConfig> {
     tokenSource,
     token,
     allowedPaths,
+    repos,
     workspaceRoot,
     dataDir,
     allowManualCwd: raw.allow_manual_cwd ?? true,
@@ -122,6 +132,17 @@ function validateConfig(config: BridgeConfig) {
   if (config.allowedPaths.includes("/")) {
     throw new Error("allowed_paths must not include /");
   }
+  for (const repo of config.repos) {
+    if (!path.isAbsolute(repo.path)) {
+      throw new Error(`repo "${repo.name}" path must be absolute or start with ~`);
+    }
+    const inAllowed = config.allowedPaths.some(
+      (allowed) => repo.path === allowed || repo.path.startsWith(`${allowed}${path.sep}`)
+    );
+    if (!inAllowed) {
+      throw new Error(`repo "${repo.name}" path must be inside an allowed_paths entry`);
+    }
+  }
   if (Buffer.byteLength(config.token) < 32) {
     throw new Error("token must be at least 32 bytes");
   }
@@ -147,6 +168,36 @@ function numberFromEnv(name: string, fallback: number): number {
 
 function uniquePaths(paths: string[]): string[] {
   return [...new Set(paths.map(expandHome))];
+}
+
+function parseRepos(raw: RawConfig["repos"]): RepoConfig[] {
+  if (!raw) return [];
+  const repos: RepoConfig[] = [];
+  const seenIds = new Set<string>();
+  for (const entry of raw) {
+    const rawPath = typeof entry === "string" ? entry : entry?.path;
+    if (typeof rawPath !== "string" || rawPath.trim().length === 0) {
+      throw new Error("repos entries must have a non-empty path");
+    }
+    const expandedPath = expandHome(rawPath.trim());
+    const rawName = typeof entry === "string" ? undefined : entry.name?.trim();
+    const name = rawName && rawName.length > 0 ? rawName : path.basename(expandedPath);
+    const id = makeRepoId(name, seenIds);
+    seenIds.add(id);
+    repos.push({ id, name, path: expandedPath });
+  }
+  return repos;
+}
+
+function makeRepoId(name: string, taken: Set<string>): string {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "repo";
+  let id = base;
+  let suffix = 2;
+  while (taken.has(id)) {
+    id = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return id;
 }
 
 function generateDevToken(): string {

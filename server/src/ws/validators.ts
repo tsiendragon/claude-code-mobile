@@ -9,6 +9,7 @@ const requestTypes = new Set([
   "system.stats",
   "workspace.list",
   "workspace.create",
+  "repo.list",
   "session.list",
   "session.run",
   "session.attach",

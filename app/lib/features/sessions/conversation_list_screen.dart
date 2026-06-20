@@ -466,8 +466,10 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
   SessionBackend _selectedBackend = SessionBackend.claude;
   _WorkspaceMode _workspaceMode = _WorkspaceMode.existing;
   List<WorkspaceSummary> _workspaces = const [];
+  List<RepoSummary> _repos = const [];
   List<String> _recentWorkspaceIds = const [];
   String? _selectedWorkspaceId;
+  String? _selectedRepoId;
   bool _useManualPath = false;
   bool _showAdvanced = false;
   bool _isLoadingWorkspaces = true;
@@ -547,6 +549,7 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         if (_selectedWorkspace != null &&
+                            _selectedRepoId == null &&
                             !_useManualPath &&
                             _workspaceMode == _WorkspaceMode.existing) ...[
                           FilledButton.icon(
@@ -742,6 +745,48 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (!_useManualPath) ...[
+          if (_repos.isNotEmpty) ...[
+            Text(
+              'Repos',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final repo in _repos)
+                  ChoiceChip(
+                    avatar: const Icon(Icons.folder_special, size: 16),
+                    label: Text(repo.name, overflow: TextOverflow.ellipsis),
+                    selected: _selectedRepoId == repo.id,
+                    onSelected: _isSubmitting
+                        ? null
+                        : (selected) {
+                            setState(() {
+                              if (selected) {
+                                _selectedRepoId = repo.id;
+                                _selectedWorkspaceId = null;
+                              } else {
+                                _selectedRepoId = null;
+                              }
+                            });
+                          },
+                  ),
+              ],
+            ),
+            if (_selectedRepo != null) ...[
+              const SizedBox(height: 8),
+              _PathPreview(
+                icon: Icons.folder_special,
+                label: 'Repo path',
+                value: _selectedRepo!.path,
+              ),
+            ],
+            const SizedBox(height: 12),
+          ],
           ToggleButtons(
             constraints: const BoxConstraints(minHeight: 40, minWidth: 112),
             isSelected: [
@@ -752,6 +797,7 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
                 ? null
                 : (index) {
                     setState(() {
+                      _selectedRepoId = null;
                       _workspaceMode = _WorkspaceMode.values[index];
                       if (_workspaceMode == _WorkspaceMode.create) {
                         _selectedWorkspaceId = null;
@@ -799,6 +845,7 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
                         : (_) {
                             setState(() {
                               _selectedWorkspaceId = workspace.id;
+                              _selectedRepoId = null;
                             });
                           },
                   ),
@@ -823,12 +870,16 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
                 labelText: 'Workspace',
                 prefixIcon: Icon(Icons.folder_open),
               ),
-              validator: (_) => _selectedWorkspaceId == null
-                  ? 'Choose or create a workspace.'
-                  : null,
+              validator: (_) =>
+                  (_selectedWorkspaceId == null && _selectedRepoId == null)
+                      ? 'Choose a repo, or pick/create a workspace.'
+                      : null,
               onChanged: _isSubmitting
                   ? null
-                  : (value) => setState(() => _selectedWorkspaceId = value),
+                  : (value) => setState(() {
+                        _selectedWorkspaceId = value;
+                        _selectedRepoId = null;
+                      }),
             )
           else
             TextFormField(
@@ -839,6 +890,7 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
                 prefixIcon: Icon(Icons.create_new_folder),
               ),
               validator: (value) {
+                if (_selectedRepoId != null) return null;
                 final text = (value ?? '').trim();
                 if (text.isEmpty) return 'Folder name is required.';
                 if (text.length > 80) return 'Use 80 characters or fewer.';
@@ -848,16 +900,18 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
                 return null;
               },
             ),
-          const SizedBox(height: 8),
-          _PathPreview(
-            icon: Icons.folder,
-            label: _workspaceMode == _WorkspaceMode.existing
-                ? 'Server path'
-                : 'Creates under server workspace root',
-            value: _workspaceMode == _WorkspaceMode.existing
-                ? selected?.path
-                : '<workspace root>/${_workspaceNamePreview()}',
-          ),
+          if (_selectedRepo == null) ...[
+            const SizedBox(height: 8),
+            _PathPreview(
+              icon: Icons.folder,
+              label: _workspaceMode == _WorkspaceMode.existing
+                  ? 'Server path'
+                  : 'Creates under server workspace root',
+              value: _workspaceMode == _WorkspaceMode.existing
+                  ? selected?.path
+                  : '<workspace root>/${_workspaceNamePreview()}',
+            ),
+          ],
         ],
         ExpansionTile(
           tilePadding: EdgeInsets.zero,
@@ -914,7 +968,18 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
       _selectedBackend = prefs.backend;
       _recentWorkspaceIds = prefs.recentWorkspaceIds;
     });
+    unawaited(_loadRepos());
     await _loadWorkspaces(preferences: prefs);
+  }
+
+  Future<void> _loadRepos() async {
+    try {
+      final repos = await context.read<BridgeClient>().listRepos();
+      if (!mounted) return;
+      setState(() => _repos = repos);
+    } on BridgeException {
+      // Repos are an optional config convenience; ignore load failures.
+    }
   }
 
   Future<void> _loadWorkspaces({_SessionLaunchPrefs? preferences}) async {
@@ -999,8 +1064,11 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
       final sessionController = context.read<SessionController>();
       final navigator = Navigator.of(context);
 
+      final selectedRepo = _selectedRepo;
       if (_useManualPath) {
         cwd = _cwdController.text.trim();
+      } else if (selectedRepo != null) {
+        cwd = selectedRepo.path;
       } else {
         switch (_workspaceMode) {
           case _WorkspaceMode.existing:
@@ -1050,6 +1118,13 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
     return null;
   }
 
+  RepoSummary? get _selectedRepo {
+    for (final repo in _repos) {
+      if (repo.id == _selectedRepoId) return repo;
+    }
+    return null;
+  }
+
   List<WorkspaceSummary> get _recentWorkspaces {
     if (_recentWorkspaceIds.isEmpty) {
       return _workspaces.take(3).toList();
@@ -1074,6 +1149,8 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
       final segments = path.split('/').where((segment) => segment.isNotEmpty);
       return segments.isEmpty ? 'Session' : segments.last;
     }
+    final selectedRepo = _selectedRepo;
+    if (selectedRepo != null) return selectedRepo.name;
     if (_workspaceMode == _WorkspaceMode.create) {
       return _workspaceNameController.text.trim();
     }

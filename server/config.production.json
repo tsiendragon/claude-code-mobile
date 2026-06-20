@@ -4,6 +4,9 @@
   "token_env": "CCM_TOKEN",
   "workspace_root": "~/workspace",
   "allowed_paths": ["~/workspace", "~/apps"],
+  "repos": [
+    { "name": "claude-code-mobile", "path": "~/apps/claude-code-mobile" }
+  ],
   "allow_manual_cwd": true,
   "ccc_bin": "ccc",
   "poll_interval_ms": 1000,

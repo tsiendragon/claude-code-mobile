@@ -228,6 +228,27 @@ class WorkspaceSummary {
   }
 }
 
+class RepoSummary {
+  const RepoSummary({
+    required this.id,
+    required this.name,
+    required this.path,
+  });
+
+  final String id;
+  final String name;
+  final String path;
+
+  factory RepoSummary.fromJson(Map<String, Object?> json) {
+    final id = json['id'] as String? ?? '';
+    return RepoSummary(
+      id: id,
+      name: json['name'] as String? ?? id,
+      path: json['path'] as String? ?? '',
+    );
+  }
+}
+
 class SystemStats {
   const SystemStats({
     required this.memory,
