@@ -323,6 +323,24 @@ describe("ccc parser", () => {
     );
   });
 
+  // Regression: a snapshot frame often captures the live prompt + animated status
+  // bar/spinner below the reply. Leaving that chrome in the extracted text made
+  // each poll differ, so the same answer was stored (and rendered) 2-3 times.
+  it("strips trailing prompt/status-bar/spinner chrome from the assistant reply", () => {
+    const output = [
+      "● 第 11 条单独重发完成。需要别的序号继续报数字就行。",
+      "",
+      "❯",
+      "[Opus 4.8] ▍░░░░░░░░░ 4% (1M) │ 5h:2% (4.3h) │ 7d:19% (9.5h)",
+      "  ← for agents",
+      "✻ Cooked for 8s"
+    ].join("\n");
+    const read = parseCccRead(JSON.stringify({ state: "ready", output }));
+
+    expect(read.output).toBe("第 11 条单独重发完成。需要别的序号继续报数字就行。");
+    expect(read.state).toBe("ready");
+  });
+
   // Regression: a plain numbered list in an assistant reply (no ❯/› cursor) must
   // NOT be mistaken for a live selection menu. This produced an endless re-prompt
   // loop — the user picked an option, the assistant answered with more numbered

@@ -100,10 +100,36 @@ function extractLatestAssistantResponse(raw: string): string | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
     if (item.role === "assistant" && item.text.trim().length > 0) {
-      return item.text;
+      const stripped = stripTrailingChrome(item.text);
+      if (stripped.length > 0) return stripped;
     }
   }
-  return cleanOptionalAssistantResponseText(raw);
+  const fallback = cleanOptionalAssistantResponseText(raw);
+  if (fallback === undefined) return undefined;
+  const stripped = stripTrailingChrome(fallback);
+  return stripped.length > 0 ? stripped : undefined;
+}
+
+// A snapshot can capture the live prompt below the reply: the empty ❯ prompt,
+// the animated "[Opus 4.8] ▍░░ 4% …" status bar, the "✻ Cooked for 8s" spinner,
+// the "← for agents" footer. These mutate every poll, so leaving them in the
+// extracted reply makes each frame differ and defeats transcript de-dup —
+// the same answer then renders 2-3 times. Drop such trailing lines.
+function stripTrailingChrome(text: string): string {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const isChromeTail = (line: string): boolean => {
+    const t = line.trim();
+    if (t.length === 0) return true;
+    if (t === "❯" || /^❯\s/u.test(t)) return true;
+    if (/^\[[^\]]*\]\s*[▏▎▍▌▋▊▉█░▒▓]/u.test(t)) return true; // status/progress bar
+    if (/^[✻✶✷✸✹✺✢✣✤✥*]\s+\S+\s+for\s+\d+s\b/u.test(t)) return true; // spinner
+    if (t === "← for agents") return true;
+    return isTerminalChromeLine(t);
+  };
+  while (lines.length > 0 && isChromeTail(lines[lines.length - 1])) {
+    lines.pop();
+  }
+  return lines.join("\n").trim();
 }
 
 function parseReadItems(input: unknown): CccTranscriptItem[] {
