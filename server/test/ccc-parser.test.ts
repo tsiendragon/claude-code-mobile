@@ -323,6 +323,30 @@ describe("ccc parser", () => {
     );
   });
 
+  // Regression: a single Claude turn renders as multiple ● bullets (intro text,
+  // a Bash tool block, closing text). The extractor used to keep only the last
+  // bullet, so the phone showed a truncated reply (missing intro + command block)
+  // that didn't match the real session.
+  it("keeps every bullet of a multi-part assistant turn (text + command block)", () => {
+    const output = [
+      "❯ 后端更新了",
+      "● 好,后端更新了,先验证一下重复渲染还在不在。",
+      "  这条回复有一定长度,可以当测试样本。",
+      "● Bash(echo \"render check\"; df -h | head -2)",
+      "  ⎿  render check",
+      "     Filesystem  Size  Used Avail Use%",
+      "● 上面这条带正文 + 命令块的消息也截一下,两张图对比。",
+      "✻ Cogitated for 17s"
+    ].join("\n");
+    const read = parseCccRead(JSON.stringify({ state: "ready", output }));
+
+    expect(read.output).toContain("好,后端更新了");
+    expect(read.output).toContain("Bash(echo");
+    expect(read.output).toContain("render check");
+    expect(read.output).toContain("上面这条带正文");
+    expect(read.state).toBe("ready");
+  });
+
   // Regression: a snapshot frame often captures the live prompt + animated status
   // bar/spinner below the reply. Leaving that chrome in the extracted text made
   // each poll differ, so the same answer was stored (and rendered) 2-3 times.

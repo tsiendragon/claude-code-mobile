@@ -97,12 +97,24 @@ function extractLatestAssistantResponse(raw: string): string | undefined {
   // recent assistant block so terminal chrome never leaks into the chat bubble.
   // Fall back to the plain cleaner when there is no assistant marker to anchor on.
   const items = parseTranscriptLines(raw.replace(/\r/g, "").split("\n"));
+  // A single Claude turn is rendered as multiple ● bullets (intro text, each
+  // tool/Bash block, closing text). Returning only the last bullet dropped the
+  // intro and command blocks. Join every assistant bullet after the most recent
+  // user prompt so the whole turn — text + command blocks — survives.
+  let lastUserIndex = -1;
   for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index];
-    if (item.role === "assistant" && item.text.trim().length > 0) {
-      const stripped = stripTrailingChrome(item.text);
-      if (stripped.length > 0) return stripped;
+    if (items[index].role === "user") {
+      lastUserIndex = index;
+      break;
     }
+  }
+  const turn = items
+    .slice(lastUserIndex + 1)
+    .filter((item) => item.role === "assistant" && item.text.trim().length > 0)
+    .map((item) => item.text);
+  if (turn.length > 0) {
+    const stripped = stripTrailingChrome(turn.join("\n\n"));
+    if (stripped.length > 0) return stripped;
   }
   const fallback = cleanOptionalAssistantResponseText(raw);
   if (fallback === undefined) return undefined;
