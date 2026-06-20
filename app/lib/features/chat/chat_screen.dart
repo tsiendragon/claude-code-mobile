@@ -140,6 +140,7 @@ class _ChatScreenState extends State<ChatScreen> {
         session.state == SessionState.choosing;
     final inputHint = _inputHint(session.state);
     final textFieldHint = _textFieldHint(session.state);
+    final promptShortcuts = _promptShortcuts(session.state);
 
     return Scaffold(
       appBar: AppBar(
@@ -342,12 +343,32 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (canInterrupt) ...[
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton.tonalIcon(
+                        icon: const Icon(Icons.stop_circle_outlined),
+                        label: const Text('Interrupt'),
+                        onPressed: _interrupt,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   if (inputHint != null) ...[
                     Text(
                       inputHint,
                       style: Theme.of(context).textTheme.labelMedium,
                     ),
                     const SizedBox(height: 6),
+                  ],
+                  if (promptShortcuts.isNotEmpty &&
+                      _pendingImages.isEmpty &&
+                      !_isSending) ...[
+                    _PromptShortcutStrip(
+                      shortcuts: promptShortcuts,
+                      onSelected: _sendShortcut,
+                    ),
+                    const SizedBox(height: 8),
                   ],
                   if (_pendingImages.isNotEmpty) ...[
                     _PendingImageStrip(
@@ -532,6 +553,12 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() => _isSending = false);
       }
     }
+  }
+
+  Future<void> _sendShortcut(_PromptShortcut shortcut) async {
+    if (_isSending || _pendingImages.isNotEmpty) return;
+    _messageController.text = shortcut.prompt;
+    await _send();
   }
 
   Future<void> _retryFailedMessage(ChatItem failedItem) async {
@@ -1279,6 +1306,32 @@ class _ChatScreenState extends State<ChatScreen> {
         return 'Send prompt';
     }
   }
+
+  List<_PromptShortcut> _promptShortcuts(SessionState state) {
+    if (state != SessionState.ready) return const <_PromptShortcut>[];
+    return const <_PromptShortcut>[
+      _PromptShortcut(
+        icon: Icons.play_arrow,
+        label: 'Continue',
+        prompt: 'Continue.',
+      ),
+      _PromptShortcut(
+        icon: Icons.science_outlined,
+        label: 'Run tests',
+        prompt: 'Run the relevant tests and fix any failures.',
+      ),
+      _PromptShortcut(
+        icon: Icons.build_outlined,
+        label: 'Fix build',
+        prompt: 'Check the build and fix any errors.',
+      ),
+      _PromptShortcut(
+        icon: Icons.difference_outlined,
+        label: 'Show changes',
+        prompt: 'Summarize the files changed and the current status.',
+      ),
+    ];
+  }
 }
 
 class _AssistantMessageAnimation {
@@ -1324,6 +1377,18 @@ class _AssistantMessageFrame {
 
   final String text;
   final bool isAnimating;
+}
+
+class _PromptShortcut {
+  const _PromptShortcut({
+    required this.icon,
+    required this.label,
+    required this.prompt,
+  });
+
+  final IconData icon;
+  final String label;
+  final String prompt;
 }
 
 int _nextAssistantChunkEnd(String text, int start) {
@@ -1382,6 +1447,36 @@ class _PendingImageAttachment {
   final String name;
   final String mime;
   final Uint8List bytes;
+}
+
+class _PromptShortcutStrip extends StatelessWidget {
+  const _PromptShortcutStrip({
+    required this.shortcuts,
+    required this.onSelected,
+  });
+
+  final List<_PromptShortcut> shortcuts;
+  final ValueChanged<_PromptShortcut> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: shortcuts.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final shortcut = shortcuts[index];
+          return ActionChip(
+            avatar: Icon(shortcut.icon, size: 16),
+            label: Text(shortcut.label),
+            onPressed: () => onSelected(shortcut),
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _PendingImageStrip extends StatelessWidget {

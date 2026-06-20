@@ -39,6 +39,12 @@
 
   <!-- Main workspace -->
   <main id="workspace" class="workspace" hidden data-testid="workspace">
+    <nav class="mobile-workspace-tabs" aria-label="Workspace sections">
+      <button type="button" class="mobile-tab active" data-mobile-panel="sessions">Sessions</button>
+      <button type="button" class="mobile-tab" data-mobile-panel="chat">Chat</button>
+      <button type="button" class="mobile-tab" data-mobile-panel="tools">Tools</button>
+    </nav>
+
     <!-- Left column: sessions -->
     <aside class="col col-sessions">
       <div class="col-head">
@@ -48,6 +54,7 @@
 
       <details class="create-box" data-testid="create-session-box">
         <summary>New session</summary>
+        <button type="button" id="btn-quick-run" class="btn btn-primary quick-run" disabled data-testid="btn-quick-run">Start last workspace</button>
         <form id="run-form" class="form-grid" data-testid="run-form">
           <label>Name
             <input id="run-name" type="text" placeholder="my task" data-testid="run-name" />
@@ -110,6 +117,12 @@
       <div id="approval-area" class="approval-area" data-testid="approval-area"></div>
 
       <form id="send-form" class="send-form" data-testid="send-form">
+        <div id="prompt-shortcuts" class="prompt-shortcuts" data-testid="prompt-shortcuts">
+          <button type="button" class="btn btn-ghost" data-prompt="Continue." disabled>Continue</button>
+          <button type="button" class="btn btn-ghost" data-prompt="Run the relevant tests and fix any failures." disabled>Run tests</button>
+          <button type="button" class="btn btn-ghost" data-prompt="Check the build and fix any errors." disabled>Fix build</button>
+          <button type="button" class="btn btn-ghost" data-prompt="Summarize the files changed and the current status." disabled>Show changes</button>
+        </div>
         <textarea id="prompt" rows="2" placeholder="Type a message, or /command" disabled data-testid="prompt"></textarea>
         <div class="send-controls">
           <input type="file" id="image-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="image-input" />

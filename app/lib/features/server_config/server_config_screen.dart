@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/config/server_config.dart';
@@ -40,6 +41,7 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<ServerConfigController>();
+    final savedProfiles = _savedProfiles(controller);
     final validation = validateServerUrl(
       _urlController.text,
       allowPrivateWs: _effectiveAllowPrivateWs,
@@ -81,6 +83,14 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
                     onSelectionChanged: _selectMode,
                   ),
                   const SizedBox(height: 12),
+                  if (savedProfiles.isNotEmpty) ...[
+                    _SavedProfileChoices(
+                      profiles: savedProfiles,
+                      selectedMode: _selectedMode,
+                      onSelected: (mode) => _selectMode({mode}),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   _ModeNotice(mode: _selectedMode),
                   const SizedBox(height: 12),
                   TextFormField(
@@ -89,6 +99,11 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
                       labelText: 'Server URL',
                       hintText: _urlHint(_selectedMode),
                       prefixIcon: const Icon(Icons.link),
+                      suffixIcon: IconButton(
+                        tooltip: 'Paste URL',
+                        icon: const Icon(Icons.content_paste),
+                        onPressed: () => _pasteInto(_urlController),
+                      ),
                       border: const OutlineInputBorder(),
                     ),
                     keyboardType: TextInputType.url,
@@ -109,16 +124,27 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
                     decoration: InputDecoration(
                       labelText: 'Token',
                       prefixIcon: const Icon(Icons.key),
-                      suffixIcon: IconButton(
-                        tooltip: _tokenObscured ? 'Show token' : 'Hide token',
-                        icon: Icon(
-                          _tokenObscured
-                              ? Icons.visibility
-                              : Icons.visibility_off,
-                        ),
-                        onPressed: () {
-                          setState(() => _tokenObscured = !_tokenObscured);
-                        },
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: 'Paste token',
+                            icon: const Icon(Icons.content_paste),
+                            onPressed: () => _pasteInto(_tokenController),
+                          ),
+                          IconButton(
+                            tooltip:
+                                _tokenObscured ? 'Show token' : 'Hide token',
+                            icon: Icon(
+                              _tokenObscured
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                            ),
+                            onPressed: () {
+                              setState(() => _tokenObscured = !_tokenObscured);
+                            },
+                          ),
+                        ],
                       ),
                       border: const OutlineInputBorder(),
                     ),
@@ -171,14 +197,14 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.network_check),
-                    label: const Text('Test connection'),
-                    onPressed: controller.isTesting ? null : _testConnection,
+                    label: const Text('Connect and save'),
+                    onPressed: controller.isTesting ? null : _connectAndSave,
                   ),
                   const SizedBox(height: 8),
-                  FilledButton.icon(
+                  OutlinedButton.icon(
                     icon: const Icon(Icons.save),
-                    label: const Text('Save'),
-                    onPressed: _save,
+                    label: const Text('Save without testing'),
+                    onPressed: controller.isTesting ? null : _save,
                   ),
                 ],
               ),
@@ -189,7 +215,24 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
     );
   }
 
-  Future<void> _testConnection() async {
+  Map<ConnectionMode, ServerConfig> _savedProfiles(
+    ServerConfigController controller,
+  ) {
+    return {
+      for (final mode in ConnectionMode.values)
+        if (controller.profileFor(mode)?.config != null)
+          mode: controller.profileFor(mode)!.config!,
+    };
+  }
+
+  Future<void> _pasteInto(TextEditingController controller) async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim();
+    if (text == null || text.isEmpty) return;
+    setState(() => controller.text = text);
+  }
+
+  Future<void> _connectAndSave() async {
     if (!_formKey.currentState!.validate()) return;
     final ok = await context.read<ServerConfigController>().testConnection(
           serverUrl: _urlController.text,
@@ -198,9 +241,7 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
           connectionMode: _selectedMode,
         );
     if (!mounted || !ok) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Connection authenticated.')),
-    );
+    await _save();
   }
 
   Future<void> _save() async {
@@ -299,6 +340,49 @@ class _ModeNotice extends StatelessWidget {
           icon: Icons.key,
           text: 'WireGuard must be connected before testing.',
         );
+    }
+  }
+}
+
+class _SavedProfileChoices extends StatelessWidget {
+  const _SavedProfileChoices({
+    required this.profiles,
+    required this.selectedMode,
+    required this.onSelected,
+  });
+
+  final Map<ConnectionMode, ServerConfig> profiles;
+  final ConnectionMode selectedMode;
+  final ValueChanged<ConnectionMode> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final entry in profiles.entries)
+          ChoiceChip(
+            avatar: Icon(_profileIcon(entry.key), size: 16),
+            label: Text(
+              '${connectionModeLabel(entry.key)} · ${entry.value.serverUrl.host}',
+              overflow: TextOverflow.ellipsis,
+            ),
+            selected: selectedMode == entry.key,
+            onSelected: (_) => onSelected(entry.key),
+          ),
+      ],
+    );
+  }
+
+  IconData _profileIcon(ConnectionMode mode) {
+    switch (mode) {
+      case ConnectionMode.direct:
+        return Icons.lan_outlined;
+      case ConnectionMode.tailscale:
+        return Icons.vpn_lock;
+      case ConnectionMode.wireguard:
+        return Icons.key;
     }
   }
 }

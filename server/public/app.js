@@ -9,6 +9,8 @@ const PROTOCOL_VERSION = 1;
 const RPC_TIMEOUT_MS = 30000;
 const LS_URL = "ccm.ws_url";
 const LS_TOKEN = "ccm.token";
+const LS_RUN_BACKEND = "ccm.run_backend";
+const LS_RUN_WORKSPACE = "ccm.run_workspace";
 
 const $ = (sel) => document.querySelector(sel);
 const el = (id) => document.getElementById(id);
@@ -261,6 +263,11 @@ function persistCredentials() {
   }
 }
 
+function persistRunDefaults(params) {
+  if (params.backend) localStorage.setItem(LS_RUN_BACKEND, params.backend);
+  if (params.workspace_id) localStorage.setItem(LS_RUN_WORKSPACE, params.workspace_id);
+}
+
 async function onAuthenticated() {
   el("auth-panel").hidden = true;
   el("workspace").hidden = false;
@@ -299,9 +306,34 @@ async function refreshWorkspaces() {
       opt.textContent = ws.name || opt.value;
       select.appendChild(opt);
     }
+    applyRunDefaults();
+    updateQuickRun();
   } catch (error) {
     toast(`workspace.list: ${error.message}`, true);
   }
+}
+
+function applyRunDefaults() {
+  const backend = localStorage.getItem(LS_RUN_BACKEND);
+  if (backend && [...el("run-backend").options].some((opt) => opt.value === backend)) {
+    el("run-backend").value = backend;
+  }
+
+  const workspace = localStorage.getItem(LS_RUN_WORKSPACE);
+  if (workspace && [...el("run-workspace").options].some((opt) => opt.value === workspace)) {
+    el("run-target").value = "workspace";
+    el("run-workspace").value = workspace;
+    el("workspace-field").hidden = false;
+    el("cwd-field").hidden = true;
+  }
+}
+
+function updateQuickRun() {
+  const button = el("btn-quick-run");
+  const workspaceId = preferredWorkspaceId();
+  const workspace = workspaceById(workspaceId);
+  button.disabled = !workspace;
+  button.textContent = workspace ? `Start ${workspace.name || workspaceId}` : "Start last workspace";
 }
 
 function renderSessionList() {
@@ -333,10 +365,7 @@ function renderSessionList() {
 
 async function runSession(event) {
   event.preventDefault();
-  const name = el("run-name").value.trim();
-  if (!name) { toast("name is required", true); return; }
   const params = {
-    name,
     backend: el("run-backend").value,
     skip_permissions: el("run-skip").checked
   };
@@ -347,15 +376,58 @@ async function runSession(event) {
     params.cwd = el("run-cwd").value.trim();
     if (!params.cwd) { toast("cwd is required", true); return; }
   }
+  params.name = resolvedRunName(params);
+  await startSession(params, { clearName: true });
+}
+
+async function quickRunSession() {
+  const workspaceId = preferredWorkspaceId();
+  const workspace = workspaceById(workspaceId);
+  if (!workspace) { toast("pick a workspace once first", true); return; }
+  const params = {
+    name: workspace.name || "Session",
+    backend: localStorage.getItem(LS_RUN_BACKEND) || el("run-backend").value,
+    workspace_id: workspaceId,
+    skip_permissions: false
+  };
+  await startSession(params);
+}
+
+async function startSession(params, opts = {}) {
   try {
     const data = await rpc("session.run", params);
-    toast(`Started ${data.name}`);
+    persistRunDefaults(params);
+    updateQuickRun();
+    toast(`Started ${data.name || params.name}`);
     await refreshSessions();
     await attachSession(data.session_id);
-    el("run-name").value = "";
+    if (opts.clearName) el("run-name").value = "";
   } catch (error) {
     toast(`session.run: ${error.message}`, true);
   }
+}
+
+function preferredWorkspaceId() {
+  const saved = localStorage.getItem(LS_RUN_WORKSPACE);
+  if (saved && workspaceById(saved)) return saved;
+  return el("run-workspace").value || state.workspaces[0]?.id || state.workspaces[0]?.workspace_id;
+}
+
+function workspaceById(id) {
+  if (!id) return null;
+  return state.workspaces.find((ws) => (ws.id || ws.workspace_id) === id) || null;
+}
+
+function resolvedRunName(params) {
+  const explicit = el("run-name").value.trim();
+  if (explicit) return explicit;
+  if (params.workspace_id) {
+    const workspace = workspaceById(params.workspace_id);
+    return workspace?.name || params.workspace_id || "Session";
+  }
+  const cwd = params.cwd || "";
+  const parts = cwd.split("/").filter(Boolean);
+  return parts.at(-1) || "Session";
 }
 
 async function createWorkspace() {
@@ -376,6 +448,7 @@ async function createWorkspace() {
 
 async function attachSession(sessionId, opts = {}) {
   try {
+    showMobilePanel("chat");
     const data = await rpc("session.attach", { session_id: sessionId });
     state.active = sessionId;
     const session = normalizeSessionRecord(data.session);
@@ -446,6 +519,9 @@ function updateComposerEnabled(stateName) {
   el("btn-attach").disabled = !active || ended;
   el("btn-interrupt").disabled = !active || !(stateName === "thinking");
   el("btn-kill").disabled = !active || ended;
+  document.querySelectorAll("#prompt-shortcuts button").forEach((button) => {
+    button.disabled = !active || ended;
+  });
 }
 
 function addItemFromTranscript(item) {
@@ -686,8 +762,12 @@ async function sendApproval(approvalId, action, choiceValue) {
 
 async function sendPrompt(event) {
   event.preventDefault();
+  await sendPromptText(el("prompt").value);
+}
+
+async function sendPromptText(rawText) {
   const textarea = el("prompt");
-  const text = textarea.value.trim();
+  const text = rawText.trim();
   if (!text || !state.active) return;
   const clientMsgId = genClientMsgId();
   const isCommand = text.startsWith("/");
@@ -925,6 +1005,24 @@ function setupTabs() {
   });
 }
 
+function showMobilePanel(name) {
+  const workspace = el("workspace");
+  workspace.classList.remove("mobile-panel-sessions", "mobile-panel-chat", "mobile-panel-tools");
+  workspace.classList.add(`mobile-panel-${name}`);
+  document.querySelectorAll(".mobile-tab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.mobilePanel === name);
+  });
+}
+
+function setupMobileWorkspaceTabs() {
+  document.querySelectorAll(".mobile-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      showMobilePanel(tab.dataset.mobilePanel || "chat");
+    });
+  });
+  showMobilePanel("sessions");
+}
+
 /* ---------------- Wiring ---------------- */
 
 function init() {
@@ -943,6 +1041,15 @@ function init() {
   el("btn-disconnect").addEventListener("click", disconnect);
   el("btn-refresh-sessions").addEventListener("click", refreshSessions);
   el("run-form").addEventListener("submit", runSession);
+  el("btn-quick-run").addEventListener("click", quickRunSession);
+  el("run-backend").addEventListener("change", () => {
+    localStorage.setItem(LS_RUN_BACKEND, el("run-backend").value);
+    updateQuickRun();
+  });
+  el("run-workspace").addEventListener("change", () => {
+    localStorage.setItem(LS_RUN_WORKSPACE, el("run-workspace").value);
+    updateQuickRun();
+  });
   el("btn-new-workspace").addEventListener("click", createWorkspace);
   el("send-form").addEventListener("submit", sendPrompt);
   el("btn-interrupt").addEventListener("click", interruptSession);
@@ -971,8 +1078,18 @@ function init() {
       el("send-form").requestSubmit();
     }
   });
+  document.querySelectorAll("#prompt-shortcuts button").forEach((button) => {
+    button.addEventListener("click", () => {
+      const prompt = button.dataset.prompt || button.textContent || "";
+      sendPromptText(prompt);
+    });
+  });
 
   setupTabs();
+  setupMobileWorkspaceTabs();
+  applyRunDefaults();
+  updateQuickRun();
+  updateComposerEnabled("");
 }
 
 document.addEventListener("DOMContentLoaded", init);

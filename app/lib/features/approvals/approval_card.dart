@@ -32,6 +32,7 @@ class _ApprovalCardState extends State<ApprovalCard>
   // The countdown window captured when this approval first appeared, so the
   // expiry hairline drains from full regardless of when it was attached.
   Duration _window = const Duration(seconds: 1);
+  bool _diffExpanded = false;
 
   @override
   void initState() {
@@ -67,6 +68,7 @@ class _ApprovalCardState extends State<ApprovalCard>
             oldWidget.approval.contentHash != widget.approval.contentHash;
     if (approvalChanged) {
       _pendingAction = null;
+      _diffExpanded = false;
       _captureWindow();
       _triggerAppearanceHaptic();
     }
@@ -205,7 +207,13 @@ class _ApprovalCardState extends State<ApprovalCard>
                 if (approval.diffSummary != null &&
                     approval.diffSummary!.isNotEmpty) ...[
                   const SizedBox(height: 8),
-                  _DiffSummary(diffSummary: approval.diffSummary!),
+                  _DiffDisclosure(
+                    diffSummary: approval.diffSummary!,
+                    expanded: _diffExpanded,
+                    onToggle: () {
+                      setState(() => _diffExpanded = !_diffExpanded);
+                    },
+                  ),
                 ],
                 const SizedBox(height: 12),
                 approval.operationKind == 'choice' &&
@@ -222,35 +230,37 @@ class _ApprovalCardState extends State<ApprovalCard>
                         runSpacing: 8,
                         children: [
                           for (final action in approval.actions)
-                            _isRejectAction(action)
-                                ? OutlinedButton.icon(
-                                    icon: _isActive(action)
-                                        ? const SizedBox.square(
-                                            dimension: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
-                                        : Icon(_actionIcon(action)),
-                                    label: Text(_actionLabel(action)),
-                                    onPressed: widget.isSubmitting || isExpired
-                                        ? null
-                                        : () => _submitAction(context, action),
-                                  )
-                                : FilledButton.icon(
-                                    icon: _isActive(action)
-                                        ? const SizedBox.square(
-                                            dimension: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
-                                        : Icon(_actionIcon(action)),
-                                    label: Text(_actionLabel(action)),
-                                    onPressed: widget.isSubmitting || isExpired
-                                        ? null
-                                        : () => _submitAction(context, action),
-                                  ),
+                            if (_isRejectAction(action) ||
+                                _isAlwaysAction(action))
+                              OutlinedButton.icon(
+                                icon: _isActive(action)
+                                    ? const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Icon(_actionIcon(action)),
+                                label: Text(_actionLabel(action)),
+                                onPressed: widget.isSubmitting || isExpired
+                                    ? null
+                                    : () => _submitAction(context, action),
+                              )
+                            else
+                              FilledButton.icon(
+                                icon: _isActive(action)
+                                    ? const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Icon(_actionIcon(action)),
+                                label: Text(_actionLabel(action)),
+                                onPressed: widget.isSubmitting || isExpired
+                                    ? null
+                                    : () => _submitAction(context, action),
+                              ),
                         ],
                       ),
               ],
@@ -332,6 +342,8 @@ class _ApprovalCardState extends State<ApprovalCard>
   bool _isRejectAction(String action) {
     return action == 'reject' || action == 'no' || action == 'deny';
   }
+
+  bool _isAlwaysAction(String action) => action == 'always';
 
   IconData _actionIcon(String action) {
     switch (action) {
@@ -513,18 +525,109 @@ class _CommandBlock extends StatelessWidget {
         borderRadius: BorderRadius.circular(tokens.radiusPanel),
         border: Border.all(color: colorScheme.outlineVariant),
       ),
-      padding: const EdgeInsets.all(10),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SelectableText(
-          command,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: tokens.codeOnSurface,
-                fontFamily: context.type.monoFamily,
+      child: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 44, 10),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SelectableText(
+                command,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: tokens.codeOnSurface,
+                      fontFamily: context.type.monoFamily,
+                    ),
               ),
-        ),
+            ),
+          ),
+          Positioned(
+            top: 2,
+            right: 2,
+            child: _CopyApprovalTextButton(text: command),
+          ),
+        ],
       ),
     );
+  }
+}
+
+class _CopyApprovalTextButton extends StatefulWidget {
+  const _CopyApprovalTextButton({required this.text});
+
+  final String text;
+
+  @override
+  State<_CopyApprovalTextButton> createState() =>
+      _CopyApprovalTextButtonState();
+}
+
+class _CopyApprovalTextButtonState extends State<_CopyApprovalTextButton> {
+  bool _copied = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: _copied ? 'Copied' : 'Copy command',
+      visualDensity: VisualDensity.compact,
+      icon: Icon(_copied ? Icons.check : Icons.copy, size: 16),
+      onPressed: () async {
+        await Clipboard.setData(ClipboardData(text: widget.text));
+        if (!mounted) return;
+        setState(() => _copied = true);
+        await Future<void>.delayed(const Duration(seconds: 2));
+        if (mounted) setState(() => _copied = false);
+      },
+    );
+  }
+}
+
+class _DiffDisclosure extends StatelessWidget {
+  const _DiffDisclosure({
+    required this.diffSummary,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final String diffSummary;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final summary = _diffStatsLabel(diffSummary);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        OutlinedButton.icon(
+          icon: Icon(expanded ? Icons.keyboard_arrow_up : Icons.difference),
+          label: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(expanded ? 'Hide diff' : 'View diff · $summary'),
+          ),
+          onPressed: onToggle,
+        ),
+        if (expanded) ...[
+          const SizedBox(height: 8),
+          _DiffSummary(diffSummary: diffSummary),
+        ],
+      ],
+    );
+  }
+
+  String _diffStatsLabel(String diff) {
+    var added = 0;
+    var removed = 0;
+    for (final line in diff.split('\n')) {
+      if (line.startsWith('+++') || line.startsWith('---')) continue;
+      if (line.startsWith('+')) added++;
+      if (line.startsWith('-')) removed++;
+    }
+    if (added == 0 && removed == 0) return 'details';
+    final parts = <String>[
+      if (added > 0) '+$added',
+      if (removed > 0) '-$removed',
+    ];
+    return parts.join(' / ');
   }
 }
 

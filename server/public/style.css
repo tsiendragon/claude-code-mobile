@@ -121,6 +121,21 @@ textarea { resize: vertical; font-family: inherit; }
   grid-template-columns: 280px 1fr 320px;
   min-height: 0;
 }
+.mobile-workspace-tabs { display: none; }
+.mobile-tab {
+  flex: 1;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.mobile-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--live);
+}
 .col { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .col-sessions { border-right: 1px solid var(--border); }
 .col-tools { border-left: 1px solid var(--border); }
@@ -130,6 +145,7 @@ textarea { resize: vertical; font-family: inherit; }
 .create-box { padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .create-box summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 .create-box .form-grid { margin-top: 10px; }
+.quick-run { width: 100%; margin-top: 10px; }
 
 .session-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
 .session-item {
@@ -195,6 +211,8 @@ textarea { resize: vertical; font-family: inherit; }
 .send-form { border-top: 1px solid var(--border); padding: 10px 16px; display: flex; flex-direction: column; gap: 8px; }
 .send-controls { display: flex; justify-content: flex-end; gap: 8px; }
 .send-form textarea { width: 100%; }
+.prompt-shortcuts { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.prompt-shortcuts .btn { white-space: nowrap; }
 .attach-preview { display: flex; gap: 8px; flex-wrap: wrap; }
 .attach-preview .chip { background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px; display: flex; gap: 6px; align-items: center; }
 .attach-preview .chip button { background: none; border: none; color: var(--danger); cursor: pointer; }
@@ -235,7 +253,54 @@ textarea { resize: vertical; font-family: inherit; }
 .toast.toast-error { border-color: var(--danger); }
 
 @media (max-width: 900px) {
-  .workspace { grid-template-columns: 1fr; }
-  .col-tools { display: none; }
-  .col-sessions { max-height: 40vh; }
+  .workspace {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .mobile-workspace-tabs {
+    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--bg-elev);
+    border-bottom: 1px solid var(--border);
+  }
+  .workspace.mobile-panel-sessions .col-chat,
+  .workspace.mobile-panel-sessions .col-tools,
+  .workspace.mobile-panel-chat .col-sessions,
+  .workspace.mobile-panel-chat .col-tools,
+  .workspace.mobile-panel-tools .col-sessions,
+  .workspace.mobile-panel-tools .col-chat {
+    display: none;
+  }
+  .col {
+    min-height: auto;
+    overflow: visible;
+  }
+  .col-sessions {
+    max-height: none;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .session-list { max-height: 34vh; }
+  .col-chat { min-height: 72vh; }
+  .messages { min-height: 44vh; }
+  .chat-head {
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .chat-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .col-tools {
+    display: flex;
+    min-height: 48vh;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+  .send-controls { justify-content: stretch; }
+  .send-controls #btn-attach { flex: 0 0 48px; }
+  .send-controls #btn-send { flex: 1; }
 }

@@ -287,7 +287,10 @@ describe("SessionManager", () => {
       name: "Demo",
       workspaceId: "demo-app"
     });
-    const image = Buffer.from("fake image");
+    const image = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+      "base64"
+    );
     const begin = manager.beginImageUpload(session.sessionId, "photo.png", "image/png", image.length);
     manager.appendImageUploadChunk(session.sessionId, begin.upload_id, 0, image.toString("base64"));
 

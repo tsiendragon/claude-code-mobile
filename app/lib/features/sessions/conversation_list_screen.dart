@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/config/server_config.dart';
 import '../../core/config/server_config_controller.dart';
@@ -26,8 +27,13 @@ class ConversationListScreen extends StatefulWidget {
 
 class _ConversationListScreenState extends State<ConversationListScreen> {
   SystemStats? _systemStats;
+  WorkspaceSummary? _quickStartWorkspace;
+  SessionBackend _quickStartBackend = SessionBackend.claude;
   bool _isLoadingSystemStats = false;
+  bool _isLoadingQuickStart = false;
+  bool _isQuickStarting = false;
   String? _systemStatsError;
+  String? _quickStartError;
 
   @override
   void initState() {
@@ -47,6 +53,7 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
     final sessions = context.watch<SessionController>();
     final client = context.watch<BridgeClient>();
     final serverConfig = context.watch<ServerConfigController>().config;
+    final sessionSections = _sessionSections(sessions.sessions);
 
     return Scaffold(
       appBar: AppBar(
@@ -104,6 +111,15 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
               error: _systemStatsError,
               onRefresh: _loadSystemStats,
             ),
+            _QuickStartPanel(
+              workspace: _quickStartWorkspace,
+              backend: _quickStartBackend,
+              isLoading: _isLoadingQuickStart,
+              isStarting: _isQuickStarting,
+              error: _quickStartError,
+              onStart: _quickStartSession,
+              onConfigure: _showCreateSessionDialog,
+            ),
             if (sessions.error != null)
               Padding(
                 padding: const EdgeInsets.all(16),
@@ -116,18 +132,15 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
               const _SessionListSkeleton(),
             if (!sessions.isLoading && sessions.sessions.isEmpty)
               const _SessionsEmptyState(),
-            for (final session in sessions.sessions)
-              _SessionTile(
-                session: session,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => ChatScreen(session: session),
-                    ),
-                  );
-                },
-                onKill: () => _confirmKill(session),
-              ),
+            for (final section in sessionSections) ...[
+              _SessionSectionHeader(section: section),
+              for (final session in section.sessions)
+                _SessionTile(
+                  session: session,
+                  onTap: () => _openSession(session),
+                  onKill: () => _confirmKill(session),
+                ),
+            ],
           ],
         ),
       ),
@@ -147,7 +160,81 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
     await Future.wait([
       context.read<SessionController>().load(),
       _loadSystemStats(),
+      _loadQuickStartTarget(),
     ]);
+  }
+
+  Future<void> _loadQuickStartTarget() async {
+    if (!mounted) return;
+    final client = context.read<BridgeClient>();
+    setState(() {
+      _isLoadingQuickStart = true;
+      _quickStartError = null;
+    });
+    try {
+      final prefs = await _SessionLaunchPrefs.load();
+      final workspaces = await client.listWorkspaces();
+      if (!mounted) return;
+      final ordered = _orderWorkspacesByPreference(
+        workspaces,
+        prefs.recentWorkspaceIds,
+      );
+      setState(() {
+        _quickStartBackend = prefs.backend;
+        _quickStartWorkspace = ordered.isEmpty ? null : ordered.first;
+      });
+    } on BridgeException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _quickStartWorkspace = null;
+        _quickStartError = error.message;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingQuickStart = false);
+      }
+    }
+  }
+
+  Future<void> _quickStartSession() async {
+    final workspace = _quickStartWorkspace;
+    if (workspace == null || _isQuickStarting) return;
+    final sessionController = context.read<SessionController>();
+    final navigator = Navigator.of(context);
+
+    setState(() {
+      _isQuickStarting = true;
+      _quickStartError = null;
+    });
+    try {
+      final sessionId = await sessionController.createSession(
+        name: workspace.name,
+        backend: _quickStartBackend,
+        workspaceId: workspace.id,
+      );
+      if (!mounted) return;
+      if (sessionId == null || sessionId.isEmpty) {
+        setState(() {
+          _quickStartError = sessionController.error ?? 'Session failed.';
+        });
+        return;
+      }
+      await _SessionLaunchPrefs.save(
+        backend: _quickStartBackend,
+        workspaceId: workspace.id,
+      );
+      final session = sessionController.sessionById(sessionId);
+      if (session == null) return;
+      navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => ChatScreen(session: session),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isQuickStarting = false);
+      }
+    }
   }
 
   Future<void> _loadSystemStats() async {
@@ -178,9 +265,20 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
     );
   }
 
+  void _openSession(SessionSummary session) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ChatScreen(session: session),
+      ),
+    );
+  }
+
   Future<void> _showCreateSessionDialog() async {
-    final created = await showDialog<String?>(
+    final created = await showModalBottomSheet<String?>(
       context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
       builder: (_) => const _CreateSessionDialog(),
     );
     if (!mounted || created == null || created.isEmpty) return;
@@ -235,6 +333,123 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
 
 enum _WorkspaceMode { existing, create }
 
+enum _SessionAction { kill }
+
+enum _SessionSectionKind { attention, running, ready, problem, ended }
+
+class _SessionSection {
+  const _SessionSection({
+    required this.kind,
+    required this.title,
+    required this.icon,
+    required this.sessions,
+  });
+
+  final _SessionSectionKind kind;
+  final String title;
+  final IconData icon;
+  final List<SessionSummary> sessions;
+}
+
+List<_SessionSection> _sessionSections(List<SessionSummary> sessions) {
+  final buckets = <_SessionSectionKind, List<SessionSummary>>{
+    for (final kind in _SessionSectionKind.values) kind: <SessionSummary>[],
+  };
+  for (final session in sessions) {
+    buckets[_sectionKindFor(session)]!.add(session);
+  }
+  return [
+    _buildSection(
+      kind: _SessionSectionKind.attention,
+      title: 'Needs attention',
+      icon: Icons.priority_high,
+      sessions: buckets[_SessionSectionKind.attention]!,
+    ),
+    _buildSection(
+      kind: _SessionSectionKind.running,
+      title: 'Running',
+      icon: Icons.sync,
+      sessions: buckets[_SessionSectionKind.running]!,
+    ),
+    _buildSection(
+      kind: _SessionSectionKind.ready,
+      title: 'Ready',
+      icon: Icons.check_circle_outline,
+      sessions: buckets[_SessionSectionKind.ready]!,
+    ),
+    _buildSection(
+      kind: _SessionSectionKind.problem,
+      title: 'Review',
+      icon: Icons.error_outline,
+      sessions: buckets[_SessionSectionKind.problem]!,
+    ),
+    _buildSection(
+      kind: _SessionSectionKind.ended,
+      title: 'Ended',
+      icon: Icons.stop_circle_outlined,
+      sessions: buckets[_SessionSectionKind.ended]!,
+    ),
+  ].where((section) => section.sessions.isNotEmpty).toList();
+}
+
+_SessionSection _buildSection({
+  required _SessionSectionKind kind,
+  required String title,
+  required IconData icon,
+  required List<SessionSummary> sessions,
+}) {
+  return _SessionSection(
+    kind: kind,
+    title: title,
+    icon: icon,
+    sessions: sessions,
+  );
+}
+
+_SessionSectionKind _sectionKindFor(SessionSummary session) {
+  if (session.needsAttention ||
+      session.state == SessionState.approval ||
+      session.state == SessionState.choosing) {
+    return _SessionSectionKind.attention;
+  }
+  switch (session.state) {
+    case SessionState.thinking:
+      return _SessionSectionKind.running;
+    case SessionState.ready:
+      return _SessionSectionKind.ready;
+    case SessionState.error:
+    case SessionState.unknown:
+      return _SessionSectionKind.problem;
+    case SessionState.ended:
+      return _SessionSectionKind.ended;
+    case SessionState.approval:
+    case SessionState.choosing:
+      return _SessionSectionKind.attention;
+  }
+}
+
+const _availableBackends = <SessionBackend>[
+  SessionBackend.claude,
+  SessionBackend.codex,
+  SessionBackend.opencode,
+  SessionBackend.cursor,
+];
+
+IconData _backendIcon(SessionBackend backend) {
+  switch (backend) {
+    case SessionBackend.claude:
+      return Icons.auto_awesome;
+    case SessionBackend.codex:
+      return Icons.terminal;
+    case SessionBackend.opencode:
+      return Icons.code;
+    case SessionBackend.cursor:
+      return Icons.edit_note;
+    case SessionBackend.unknown:
+      return Icons.smart_toy_outlined;
+  }
+}
+
 class _CreateSessionDialog extends StatefulWidget {
   const _CreateSessionDialog();
 
@@ -251,6 +466,7 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
   SessionBackend _selectedBackend = SessionBackend.claude;
   _WorkspaceMode _workspaceMode = _WorkspaceMode.existing;
   List<WorkspaceSummary> _workspaces = const [];
+  List<String> _recentWorkspaceIds = const [];
   String? _selectedWorkspaceId;
   bool _useManualPath = false;
   bool _showAdvanced = false;
@@ -262,7 +478,7 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadWorkspaces());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadStartupState());
   }
 
   @override
@@ -277,25 +493,16 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tokens = context.tokens;
-    return AlertDialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-      titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-      contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
-      actionsPadding: const EdgeInsets.fromLTRB(12, 0, 16, 12),
-      title: Row(
-        children: [
-          Icon(Icons.bolt, size: 18, color: tokens.liveWire),
-          const SizedBox(width: 8),
-          Text(
-            'New session',
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-      content: SizedBox(
-        width: 360,
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    return FractionallySizedBox(
+      heightFactor: 0.92,
+      child: AnimatedPadding(
+        duration: context.motion.durationOf(
+          context,
+          context.motion.fast,
+        ),
+        curve: context.motion.standardCurve,
+        padding: EdgeInsets.only(bottom: bottomInset),
         child: Theme(
           data: theme.copyWith(
             visualDensity: VisualDensity.compact,
@@ -305,139 +512,210 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             ),
           ),
-          child: Form(
-            key: _formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _sectionLabel(context, 'AGENT'),
-                  DropdownButtonFormField<SessionBackend>(
-                    initialValue: _selectedBackend,
-                    isDense: true,
-                    style: theme.textTheme.bodyMedium,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.smart_toy_outlined, size: 18),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 2, 20, 14),
+                child: Row(
+                  children: [
+                    Icon(Icons.bolt, size: 18, color: tokens.liveWire),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'New session',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: SessionBackend.claude,
-                        child: Text('Claude Code'),
-                      ),
-                      DropdownMenuItem(
-                        value: SessionBackend.codex,
-                        child: Text('Codex'),
-                      ),
-                      DropdownMenuItem(
-                        value: SessionBackend.opencode,
-                        child: Text('Opencode'),
-                      ),
-                      DropdownMenuItem(
-                        value: SessionBackend.cursor,
-                        child: Text('Cursor'),
-                      ),
-                    ],
-                    onChanged: _isSubmitting
-                        ? null
-                        : (value) {
-                            if (value == null) return;
-                            setState(() => _selectedBackend = value);
+                    IconButton(
+                      tooltip: 'Close',
+                      icon: const Icon(Icons.close),
+                      onPressed: _isSubmitting
+                          ? null
+                          : () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Form(
+                  key: _formKey,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (_selectedWorkspace != null &&
+                            !_useManualPath &&
+                            _workspaceMode == _WorkspaceMode.existing) ...[
+                          FilledButton.icon(
+                            icon: _isSubmitting
+                                ? const SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.play_arrow, size: 18),
+                            label: Text(
+                              'Start in ${_selectedWorkspace!.name}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onPressed: _isSubmitting || _isLoadingWorkspaces
+                                ? null
+                                : _quickCreateSelectedWorkspace,
+                          ),
+                          const SizedBox(height: 18),
+                        ],
+                        _sectionLabel(context, 'AGENT'),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final backend in _availableBackends)
+                              ChoiceChip(
+                                avatar: Icon(_backendIcon(backend), size: 16),
+                                label: Text(sessionBackendLabel(backend)),
+                                selected: _selectedBackend == backend,
+                                onSelected: _isSubmitting
+                                    ? null
+                                    : (_) {
+                                        setState(
+                                          () => _selectedBackend = backend,
+                                        );
+                                      },
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 18),
+                        _sectionLabel(context, 'LOCATION'),
+                        if (_isLoadingWorkspaces)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 10),
+                            child: LinearProgressIndicator(),
+                          )
+                        else
+                          _buildTargetField(),
+                        const SizedBox(height: 18),
+                        _sectionLabel(context, 'DETAILS'),
+                        TextFormField(
+                          controller: _sessionNameController,
+                          style: theme.textTheme.bodyMedium,
+                          decoration: const InputDecoration(
+                            labelText: 'Session name (optional)',
+                            prefixIcon: Icon(Icons.terminal, size: 18),
+                          ),
+                          validator: (value) {
+                            final text = (value ?? '').trim();
+                            if (text.length > 80) {
+                              return 'Use 80 characters or fewer.';
+                            }
+                            return null;
                           },
-                  ),
-                  const SizedBox(height: 18),
-                  _sectionLabel(context, 'LOCATION'),
-                  if (_isLoadingWorkspaces)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 10),
-                      child: LinearProgressIndicator(),
-                    )
-                  else
-                    _buildTargetField(),
-                  const SizedBox(height: 18),
-                  _sectionLabel(context, 'DETAILS'),
-                  TextFormField(
-                    controller: _sessionNameController,
-                    style: theme.textTheme.bodyMedium,
-                    decoration: const InputDecoration(
-                      labelText: 'Session name (optional)',
-                      prefixIcon: Icon(Icons.terminal, size: 18),
-                    ),
-                    validator: (value) {
-                      final text = (value ?? '').trim();
-                      if (text.length > 80) {
-                        return 'Use 80 characters or fewer.';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 4),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    title: Text(
-                      'Skip permission prompts',
-                      style: theme.textTheme.bodyMedium,
-                    ),
-                    subtitle: Text(
-                      'Runs with --dangerously-skip-permissions',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    value: _skipPermissions,
-                    onChanged: _isSubmitting
-                        ? null
-                        : (value) => setState(() => _skipPermissions = value),
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _error!,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.error,
+                        ),
+                        const SizedBox(height: 8),
+                        ExpansionTile(
+                          tilePadding: EdgeInsets.zero,
+                          childrenPadding: EdgeInsets.zero,
+                          title: const Text('Advanced options'),
+                          children: [
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              dense: true,
+                              title: Text(
+                                'Skip permission prompts',
+                                style: theme.textTheme.bodyMedium,
+                              ),
+                              subtitle: Text(
+                                'Runs with --dangerously-skip-permissions',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                              value: _skipPermissions,
+                              onChanged: _isSubmitting
+                                  ? null
+                                  : (value) {
+                                      setState(
+                                        () => _skipPermissions = value,
+                                      );
+                                    },
+                            ),
+                          ],
+                        ),
+                        if (_error != null) ...[
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _error!,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.error,
+                                  ),
+                                ),
+                                if (_useManualPath && _workspaces.isEmpty)
+                                  TextButton.icon(
+                                    icon: const Icon(Icons.refresh, size: 16),
+                                    label: const Text('Retry workspaces'),
+                                    onPressed: _isSubmitting
+                                        ? null
+                                        : () => _loadWorkspaces(),
+                                  ),
+                              ],
                             ),
                           ),
-                          if (_useManualPath && _workspaces.isEmpty)
-                            TextButton.icon(
-                              icon: const Icon(Icons.refresh, size: 16),
-                              label: const Text('Retry workspaces'),
-                              onPressed: _isSubmitting
-                                  ? null
-                                  : () => _loadWorkspaces(),
-                            ),
                         ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: theme.colorScheme.outlineVariant),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _isSubmitting
+                            ? null
+                            : () => Navigator.of(context).pop(),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 2,
+                      child: FilledButton.icon(
+                        icon: _isSubmitting
+                            ? const SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.play_arrow, size: 18),
+                        label: const Text('Create'),
+                        onPressed: _isSubmitting || _isLoadingWorkspaces
+                            ? null
+                            : _createSession,
                       ),
                     ),
                   ],
-                ],
+                ),
               ),
-            ),
+            ],
           ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton.icon(
-          icon: _isSubmitting
-              ? const SizedBox.square(
-                  dimension: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.play_arrow, size: 18),
-          label: const Text('Create'),
-          onPressed:
-              _isSubmitting || _isLoadingWorkspaces ? null : _createSession,
-        ),
-      ],
     );
   }
 
@@ -502,6 +780,32 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
             ],
           ),
           const SizedBox(height: 12),
+          if (_workspaceMode == _WorkspaceMode.existing &&
+              _recentWorkspaces.isNotEmpty) ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final workspace in _recentWorkspaces)
+                  ChoiceChip(
+                    avatar: const Icon(Icons.history, size: 16),
+                    label: Text(
+                      workspace.name,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    selected: _selectedWorkspaceId == workspace.id,
+                    onSelected: _isSubmitting
+                        ? null
+                        : (_) {
+                            setState(() {
+                              _selectedWorkspaceId = workspace.id;
+                            });
+                          },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
           if (_workspaceMode == _WorkspaceMode.existing)
             DropdownButtonFormField<String>(
               initialValue: _selectedWorkspaceId,
@@ -603,18 +907,39 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
     );
   }
 
-  Future<void> _loadWorkspaces() async {
+  Future<void> _loadStartupState() async {
+    final prefs = await _SessionLaunchPrefs.load();
+    if (!mounted) return;
+    setState(() {
+      _selectedBackend = prefs.backend;
+      _recentWorkspaceIds = prefs.recentWorkspaceIds;
+    });
+    await _loadWorkspaces(preferences: prefs);
+  }
+
+  Future<void> _loadWorkspaces({_SessionLaunchPrefs? preferences}) async {
+    final prefs = preferences ??
+        _SessionLaunchPrefs(
+          backend: _selectedBackend,
+          recentWorkspaceIds: _recentWorkspaceIds,
+        );
     setState(() {
       _isLoadingWorkspaces = true;
       _error = null;
     });
 
     try {
-      final workspaces = await context.read<BridgeClient>().listWorkspaces();
+      final loaded = await context.read<BridgeClient>().listWorkspaces();
+      final workspaces = _orderWorkspacesByPreference(
+        loaded,
+        prefs.recentWorkspaceIds,
+      );
       if (!mounted) return;
       setState(() {
         _workspaces = workspaces;
-        _selectedWorkspaceId = workspaces.isEmpty ? null : workspaces.first.id;
+        _recentWorkspaceIds = prefs.recentWorkspaceIds;
+        _selectedWorkspaceId =
+            _preferredWorkspaceId(workspaces, prefs.recentWorkspaceIds);
         if (workspaces.isEmpty) _workspaceMode = _WorkspaceMode.create;
         _useManualPath = false;
         _showAdvanced = false;
@@ -633,8 +958,34 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
     }
   }
 
-  Future<void> _createSession() async {
-    if (!_formKey.currentState!.validate()) return;
+  String? _preferredWorkspaceId(
+    List<WorkspaceSummary> workspaces,
+    List<String> recentWorkspaceIds,
+  ) {
+    if (workspaces.isEmpty) return null;
+    final ids = workspaces.map((workspace) => workspace.id).toSet();
+    if (_selectedWorkspaceId != null && ids.contains(_selectedWorkspaceId)) {
+      return _selectedWorkspaceId;
+    }
+    for (final id in recentWorkspaceIds) {
+      if (ids.contains(id)) return id;
+    }
+    return workspaces.first.id;
+  }
+
+  Future<void> _quickCreateSelectedWorkspace() async {
+    if (_selectedWorkspaceId == null) return;
+    setState(() {
+      _workspaceMode = _WorkspaceMode.existing;
+      _useManualPath = false;
+      _skipPermissions = false;
+      _sessionNameController.clear();
+    });
+    await _createSession(validate: false);
+  }
+
+  Future<void> _createSession({bool validate = true}) async {
+    if (validate && !_formKey.currentState!.validate()) return;
 
     setState(() {
       _isSubmitting = true;
@@ -646,6 +997,7 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
       String? cwd;
       final bridgeClient = context.read<BridgeClient>();
       final sessionController = context.read<SessionController>();
+      final navigator = Navigator.of(context);
 
       if (_useManualPath) {
         cwd = _cwdController.text.trim();
@@ -677,7 +1029,11 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
         });
         return;
       }
-      Navigator.of(context).pop(sessionId);
+      await _SessionLaunchPrefs.save(
+        backend: _selectedBackend,
+        workspaceId: workspaceId,
+      );
+      navigator.pop(sessionId);
     } on BridgeException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } finally {
@@ -692,6 +1048,22 @@ class _CreateSessionDialogState extends State<_CreateSessionDialog> {
       if (workspace.id == _selectedWorkspaceId) return workspace;
     }
     return null;
+  }
+
+  List<WorkspaceSummary> get _recentWorkspaces {
+    if (_recentWorkspaceIds.isEmpty) {
+      return _workspaces.take(3).toList();
+    }
+    final recent = <WorkspaceSummary>[];
+    for (final id in _recentWorkspaceIds) {
+      for (final workspace in _workspaces) {
+        if (workspace.id == id) {
+          recent.add(workspace);
+          break;
+        }
+      }
+    }
+    return recent.take(3).toList();
   }
 
   String _resolvedSessionName() {
@@ -746,6 +1118,104 @@ class _PathPreview extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _QuickStartPanel extends StatelessWidget {
+  const _QuickStartPanel({
+    required this.workspace,
+    required this.backend,
+    required this.isLoading,
+    required this.isStarting,
+    required this.error,
+    required this.onStart,
+    required this.onConfigure,
+  });
+
+  final WorkspaceSummary? workspace;
+  final SessionBackend backend;
+  final bool isLoading;
+  final bool isStarting;
+  final String? error;
+  final VoidCallback onStart;
+  final VoidCallback onConfigure;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final workspace = this.workspace;
+    if (workspace == null && !isLoading && error == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      color: colorScheme.surface,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (workspace != null)
+            FilledButton.icon(
+              icon: isStarting
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.play_arrow),
+              label: Text(
+                'Start ${workspace.name}',
+                overflow: TextOverflow.ellipsis,
+              ),
+              onPressed: isStarting ? null : onStart,
+            )
+          else
+            OutlinedButton.icon(
+              icon: isLoading
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.add),
+              label: Text(isLoading ? 'Finding workspaces' : 'New session'),
+              onPressed: isLoading ? null : onConfigure,
+            ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(
+                workspace == null
+                    ? Icons.info_outline
+                    : Icons.folder_open_outlined,
+                size: 16,
+                color: colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  error ??
+                      (workspace == null
+                          ? 'Choose a workspace once; ccm will remember it.'
+                          : '${sessionBackendLabel(backend)} · ${workspace.path}'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: error == null
+                        ? colorScheme.onSurfaceVariant
+                        : colorScheme.error,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: isStarting ? null : onConfigure,
+                child: const Text('Change'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1271,10 +1741,27 @@ class _SessionTile extends StatelessWidget {
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
-      trailing: IconButton(
-        tooltip: 'Kill session',
-        icon: const Icon(Icons.close),
-        onPressed: session.state == SessionState.ended ? null : onKill,
+      trailing: PopupMenuButton<_SessionAction>(
+        tooltip: 'Session actions',
+        onSelected: (action) {
+          switch (action) {
+            case _SessionAction.kill:
+              onKill();
+          }
+        },
+        itemBuilder: (context) => [
+          PopupMenuItem<_SessionAction>(
+            value: _SessionAction.kill,
+            enabled: session.state != SessionState.ended,
+            child: const Row(
+              children: [
+                Icon(Icons.stop_circle_outlined, size: 18),
+                SizedBox(width: 8),
+                Text('Kill session'),
+              ],
+            ),
+          ),
+        ],
       ),
       onTap: onTap,
     );
@@ -1335,6 +1822,46 @@ class _SessionTile extends StatelessWidget {
   }
 }
 
+class _SessionSectionHeader extends StatelessWidget {
+  const _SessionSectionHeader({required this.section});
+
+  final _SessionSection section;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.tokens;
+    final isAttention = section.kind == _SessionSectionKind.attention;
+    final color =
+        isAttention ? tokens.liveWire : theme.colorScheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
+      child: Row(
+        children: [
+          Icon(section.icon, size: 16, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              section.title,
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: color,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Text(
+            section.sessions.length.toString(),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontFeatures: CcmTypography.tabularFigures,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 String _formatDuration(int seconds) {
   final days = seconds ~/ 86400;
   final hours = (seconds % 86400) ~/ 3600;
@@ -1389,6 +1916,81 @@ class _StatusBadge extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SessionLaunchPrefs {
+  const _SessionLaunchPrefs({
+    required this.backend,
+    required this.recentWorkspaceIds,
+  });
+
+  static const _backendKey = 'ccm_session_backend';
+  static const _recentWorkspacesKey = 'ccm_recent_workspace_ids';
+  static const _maxRecentWorkspaces = 5;
+
+  final SessionBackend backend;
+  final List<String> recentWorkspaceIds;
+
+  static Future<_SessionLaunchPrefs> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    return _SessionLaunchPrefs(
+      backend: _parseBackend(prefs.getString(_backendKey)),
+      recentWorkspaceIds: prefs
+              .getStringList(_recentWorkspacesKey)
+              ?.where((id) => id.trim().isNotEmpty)
+              .toList() ??
+          const <String>[],
+    );
+  }
+
+  static Future<void> save({
+    required SessionBackend backend,
+    String? workspaceId,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_backendKey, sessionBackendToWire(backend));
+
+    final workspace = workspaceId?.trim();
+    if (workspace == null || workspace.isEmpty) return;
+
+    final recent = prefs.getStringList(_recentWorkspacesKey) ?? <String>[];
+    final updated = <String>[
+      workspace,
+      for (final id in recent)
+        if (id != workspace && id.trim().isNotEmpty) id,
+    ].take(_maxRecentWorkspaces).toList();
+    await prefs.setStringList(_recentWorkspacesKey, updated);
+  }
+
+  static SessionBackend _parseBackend(String? value) {
+    if (value == null) return SessionBackend.claude;
+    for (final backend in SessionBackend.values) {
+      if (backend == SessionBackend.unknown) continue;
+      if (sessionBackendToWire(backend) == value || backend.name == value) {
+        return backend;
+      }
+    }
+    return SessionBackend.claude;
+  }
+}
+
+List<WorkspaceSummary> _orderWorkspacesByPreference(
+  List<WorkspaceSummary> workspaces,
+  List<String> recentWorkspaceIds,
+) {
+  if (workspaces.isEmpty || recentWorkspaceIds.isEmpty) return workspaces;
+  final rank = <String, int>{
+    for (var index = 0; index < recentWorkspaceIds.length; index++)
+      recentWorkspaceIds[index]: index,
+  };
+  final ordered = List<WorkspaceSummary>.from(workspaces);
+  ordered.sort((a, b) {
+    final aRank = rank[a.id] ?? 9999;
+    final bRank = rank[b.id] ?? 9999;
+    if (aRank != bRank) return aRank.compareTo(bRank);
+    return a.name.compareTo(b.name);
+  });
+  return ordered;
 }
 
 /// Branded empty state: a monospace wordmark over a liveWire hairline, with a
