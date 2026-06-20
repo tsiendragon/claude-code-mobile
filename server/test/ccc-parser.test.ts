@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseCccHistory, parseCccRead, parseCccSessionList } from "../src/ccc/ccc-parser.js";
+
+function loadFixture(name: string): string {
+  return readFileSync(fileURLToPath(new URL(`./fixtures/ccc-parse/${name}`, import.meta.url)), "utf8");
+}
 
 describe("ccc parser", () => {
   it("preserves ccc alive status from ps output", () => {
@@ -284,5 +290,70 @@ describe("ccc parser", () => {
         { value: "3", label: "Skip until next version" }
       ]
     });
+  });
+
+  // Regression: Claude Code highlights the selected option with ❯ (U+276F), not the
+  // codex › (U+203A). The parser used to ignore ❯, so the first/primary "Yes" option
+  // was dropped from the approval card entirely (only "allow all edits" and "No" showed).
+  it("captures the ❯-highlighted first option in Claude Code approval prompts", () => {
+    const read = parseCccRead(JSON.stringify({
+      state: "ready",
+      lines: [
+        " Do you want to create approval_probe.txt?",
+        " ❯ 1. Yes",
+        "   2. Yes, allow all edits during this session (shift+tab)",
+        "   3. No",
+        "",
+        " Esc to cancel · Tab to amend"
+      ]
+    }));
+
+    expect(read.state).toBe("choosing");
+    expect(read.pendingApproval).toMatchObject({
+      operationKind: "choice",
+      actions: ["choice"],
+      choices: [
+        { value: "1", label: "Yes" },
+        { value: "2", label: "Yes, allow all edits during this session (shift+tab)" },
+        { value: "3", label: "No" }
+      ]
+    });
+    expect(read.pendingApproval?.description.split("\n")[0]).toBe(
+      "Do you want to create approval_probe.txt?"
+    );
+  });
+
+  // Regression captured live via the web console + Playwright: `ccc read --json` returns
+  // a full-screen pane dump where stale output (a prior "count to 200" reply) sits above
+  // the live approval prompt. The title scan used to grab the first non-numbered line in
+  // the whole dump ("190") instead of the actual question, and the ❯ option was lost.
+  // Fixtures: approval_raw.txt (raw tmux pane) + approval_ccc_read.json (ccc read --json).
+  it("parses the real captured file-write approval without leaking stale pane output", () => {
+    const read = parseCccRead(loadFixture("approval_ccc_read.json"));
+
+    expect(read.state).toBe("choosing");
+    expect(read.pendingApproval?.operationKind).toBe("choice");
+    expect(read.pendingApproval?.choices).toEqual([
+      { value: "1", label: "Yes" },
+      { value: "2", label: "Yes, allow all edits during this session (shift+tab)" },
+      { value: "3", label: "No" }
+    ]);
+
+    const title = read.pendingApproval?.description.split("\n")[0];
+    expect(title).toBe("Do you want to create approval_probe.txt?");
+    expect(title).not.toBe("190");
+  });
+
+  // Baseline captured live (Codex backend, codex-cli 0.139.0): a clean reply with no
+  // pending approval. Codex marks turns with • / › rather than ● / ❯, so the assistant
+  // text is recovered from the lastResponse field rather than the pane line scan.
+  // Fixture: codex_ready.json (ccc read --json).
+  it("parses a clean Codex reply with no pending approval", () => {
+    const read = parseCccRead(loadFixture("codex_ready.json"));
+
+    expect(read.state).toBe("ready");
+    expect(read.output).toBe("KIWI");
+    expect(read.pendingApproval).toBeUndefined();
+    expect(read.items?.some((item) => item.role === "assistant" && item.text === "KIWI")).toBe(true);
   });
 });
