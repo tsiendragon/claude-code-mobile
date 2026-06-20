@@ -32,15 +32,16 @@ export class WsGateway {
       maxPayload: config.maxWsMessageBytes
     });
     this.wss.on("connection", (socket, request) => {
+      const remoteAddress = clientAddress(request);
       if (request.url && request.url !== "/" && request.url !== "/ws") {
         this.logger.warn("ws_rejected_path", {
-          remote_address: request.socket.remoteAddress ?? "unknown",
+          remote_address: remoteAddress,
           path: request.url
         });
         socket.close(1008, "unsupported path");
         return;
       }
-      this.handleConnection(socket, request.socket.remoteAddress ?? "unknown");
+      this.handleConnection(socket, remoteAddress);
     });
     events.subscribe((event) => {
       if (this.activeSocket?.readyState === WebSocket.OPEN) {
@@ -288,6 +289,22 @@ export class WsGateway {
   private send(socket: WebSocket, payload: unknown) {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
   }
+}
+
+// Behind the local Caddy reverse proxy every socket originates from loopback,
+// so keying rate-limit / auth-failure tracking on socket.remoteAddress lumps
+// all clients into one bucket — a single client failing auth 5 times blocks
+// everyone for 30 minutes. Trust X-Forwarded-For only from a loopback peer
+// (the proxy) so the key reflects the real client.
+function clientAddress(request: http.IncomingMessage): string {
+  const peer = request.socket.remoteAddress ?? "unknown";
+  if (peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1") {
+    const forwarded = request.headers["x-forwarded-for"];
+    const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    const candidate = raw?.split(",")[0]?.trim();
+    if (candidate) return candidate;
+  }
+  return peer;
 }
 
 function normalizeBackend(value: unknown): SessionBackend {
