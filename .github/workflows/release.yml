@@ -49,11 +49,28 @@ jobs:
       - name: Test
         run: flutter test
 
+      - name: Decode signing keystore (optional)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CCM_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          # A stable release keystore keeps the APK signature constant across
+          # releases, so updates install over the previous build without an
+          # uninstall. Without it, the build falls back to a per-runner debug
+          # key (signature changes every release).
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            dest="$RUNNER_TEMP/ccm-release.jks"
+            echo "$KEYSTORE_BASE64" | base64 -d > "$dest"
+            echo "CCM_ANDROID_STORE_FILE=$dest" >> "$GITHUB_ENV"
+            echo "Release keystore decoded; signing with the stable release key."
+          else
+            echo "No CCM_ANDROID_KEYSTORE_BASE64 secret; falling back to debug signing."
+          fi
+
       - name: Build release APK
         env:
-          # Optional signing — populated from repo secrets when present, empty
-          # otherwise (build.gradle then falls back to debug signing).
-          CCM_ANDROID_STORE_FILE: ${{ secrets.CCM_ANDROID_STORE_FILE }}
+          # Signing — CCM_ANDROID_STORE_FILE is exported by the decode step above
+          # when the keystore secret is present; otherwise build.gradle falls
+          # back to debug signing.
           CCM_ANDROID_STORE_PASSWORD: ${{ secrets.CCM_ANDROID_STORE_PASSWORD }}
           CCM_ANDROID_KEY_ALIAS: ${{ secrets.CCM_ANDROID_KEY_ALIAS }}
           CCM_ANDROID_KEY_PASSWORD: ${{ secrets.CCM_ANDROID_KEY_PASSWORD }}
