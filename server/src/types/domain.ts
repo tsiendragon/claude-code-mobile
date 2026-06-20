@@ -70,6 +70,10 @@ export type SessionRecord = {
   lastSeq: number;
   lastSnapshotHash?: string;
   pendingApproval?: ApprovalRecord;
+  // contentHash of the approval/choice just resolved by the user. ccc may still
+  // render the same prompt for a poll or two before it advances; suppress
+  // re-creating that stale approval until its hash changes or it disappears.
+  resolvedApprovalHash?: string;
   capabilities: SessionCapabilities;
 };
 

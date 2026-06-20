@@ -298,6 +298,7 @@ export class SessionManager {
     if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
     pending.status = cccAction === "no" ? "rejected" : "approved";
     this.append(session, { kind: "approval_resolved", approvalId, status: pending.status });
+    session.resolvedApprovalHash = pending.contentHash;
     session.pendingApproval = undefined;
     this.updateState(session, "thinking");
     const response = { approved: pending.status === "approved", status: pending.status };
@@ -319,6 +320,7 @@ export class SessionManager {
       if (session.pendingApproval?.operationKind === "choice") {
         const approvalId = session.pendingApproval.approvalId;
         session.pendingApproval.status = "approved";
+        session.resolvedApprovalHash = session.pendingApproval.contentHash;
         session.pendingApproval = undefined;
         this.append(session, { kind: "approval_resolved", approvalId, status: "approved" });
       }
@@ -416,15 +418,25 @@ export class SessionManager {
       }
     }
     if (result.data.pendingApproval) {
-      const existing = session.pendingApproval;
-      if (!existing || existing.contentHash !== result.data.pendingApproval.contentHash) {
-        session.pendingApproval = createApproval(session.sessionId, result.data.pendingApproval);
-        this.append(session, { kind: "approval_requested", approval: serializeApproval(session.pendingApproval) });
+      const incomingHash = result.data.pendingApproval.contentHash;
+      if (session.resolvedApprovalHash === incomingHash) {
+        // The user just resolved this exact prompt; ccc hasn't advanced past it
+        // yet. Don't re-surface it — wait until the hash changes or it clears.
+      } else {
+        const existing = session.pendingApproval;
+        if (!existing || existing.contentHash !== incomingHash) {
+          session.resolvedApprovalHash = undefined;
+          session.pendingApproval = createApproval(session.sessionId, result.data.pendingApproval);
+          this.append(session, { kind: "approval_requested", approval: serializeApproval(session.pendingApproval) });
+        }
       }
-    } else if (session.pendingApproval?.status === "pending" && session.state !== "approval" && session.state !== "choosing") {
-      const staleApprovalId = session.pendingApproval.approvalId;
-      session.pendingApproval = undefined;
-      this.append(session, { kind: "approval_resolved", approvalId: staleApprovalId, status: "interrupted" });
+    } else {
+      session.resolvedApprovalHash = undefined;
+      if (session.pendingApproval?.status === "pending" && session.state !== "approval" && session.state !== "choosing") {
+        const staleApprovalId = session.pendingApproval.approvalId;
+        session.pendingApproval = undefined;
+        this.append(session, { kind: "approval_resolved", approvalId: staleApprovalId, status: "interrupted" });
+      }
     }
     return session;
   }
