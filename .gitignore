@@ -40,3 +40,6 @@ test-results/
 
 # Deployment config — machine-specific host/paths; use config.example.json as the template
 server/config.production.json
+
+# ccm mobile per-session scratch (image uploads) written into the session cwd
+.ccm-mobile/

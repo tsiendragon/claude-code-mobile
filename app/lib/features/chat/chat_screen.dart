@@ -2377,6 +2377,14 @@ String _neutralizeSetextHeadings(String input) {
         out.add('');
       }
     }
+    // Collapse 3+ blank lines (common in scraped terminal output) to one blank
+    // so messages don't render with large vertical gaps.
+    if (trimmed.isEmpty &&
+        out.length >= 2 &&
+        out[out.length - 1].trim().isEmpty &&
+        out[out.length - 2].trim().isEmpty) {
+      continue;
+    }
     out.add(line);
   }
   return out.join('\n');
@@ -2686,19 +2694,41 @@ class _CodeBlockBuilder extends MarkdownElementBuilder {
   @override
   Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) {
     final code = element.textContent.trimRight();
+    // Command/tool blocks (Bash(…) + ⎿ output) read as terminal output — mark
+    // them with a left accent + ❯ glyph so they're distinct from plain code.
+    final firstLine = code.split('\n').first.trim();
+    final isCommand =
+        RegExp(r'^[A-Z][\w.-]*\(').hasMatch(firstLine) || code.contains('⎿');
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(6),
+        border: isCommand
+            ? Border(left: BorderSide(color: colorScheme.primary, width: 3))
+            : null,
       ),
       child: Stack(
         children: [
           Padding(
-            padding: const EdgeInsets.all(10),
+            padding: EdgeInsets.fromLTRB(isCommand ? 12 : 10, 10, 10, 10),
             child: SizedBox(
               width: double.infinity,
-              child: SelectableText(code, style: codeStyle),
+              child: isCommand
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(top: 1, right: 6),
+                          child: Icon(Icons.chevron_right,
+                              size: 16, color: colorScheme.primary),
+                        ),
+                        Expanded(
+                          child: SelectableText(code, style: codeStyle),
+                        ),
+                      ],
+                    )
+                  : SelectableText(code, style: codeStyle),
             ),
           ),
           Positioned(
