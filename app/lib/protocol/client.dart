@@ -384,6 +384,7 @@ class BridgeClient extends ChangeNotifier {
     String? messageId,
     required String verdict,
     String? note,
+    List<String>? imagePaths,
     Map<String, Object?>? client,
   }) async {
     final data = await request('feedback.submit', {
@@ -392,6 +393,7 @@ class BridgeClient extends ChangeNotifier {
       if (messageId != null) 'message_id': messageId,
       'verdict': verdict,
       if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+      if (imagePaths != null && imagePaths.isNotEmpty) 'image_paths': imagePaths,
       if (client != null) 'client': client,
     });
     return data['artifacts_missing'] == true;

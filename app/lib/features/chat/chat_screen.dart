@@ -20,6 +20,13 @@ const _linkChannel = MethodChannel('ccm_mobile/links');
 const _mediaChannel = MethodChannel('ccm_mobile/media');
 const _assistantStreamFrameDelay = Duration(milliseconds: 40);
 
+class AssistantReplyOption {
+  const AssistantReplyOption({required this.label, required this.prompt});
+
+  final String label;
+  final String prompt;
+}
+
 /// Index of the existing assistant bubble that [incoming] continues, or -1 to
 /// append a new one.
 ///
@@ -48,6 +55,66 @@ int assistantMergeIndex(
     return lastIndex;
   }
   return -1;
+}
+
+List<AssistantReplyOption> extractAssistantReplyOptions(String text) {
+  final lines = text.replaceAll('\r\n', '\n').split('\n');
+  final candidates = <AssistantReplyOption>[];
+  var sawOptionPrompt = false;
+  var inFence = false;
+
+  for (final rawLine in lines) {
+    final line = rawLine.trim();
+    if (line.startsWith('```') || line.startsWith('~~~')) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (line.isEmpty) {
+      if (candidates.isNotEmpty) break;
+      continue;
+    }
+
+    if (candidates.isEmpty && _looksLikeOptionPrompt(line)) {
+      sawOptionPrompt = true;
+      continue;
+    }
+
+    final option = _parseReplyOptionLine(line);
+    if (option == null) {
+      if (candidates.isNotEmpty) break;
+      continue;
+    }
+    if (!sawOptionPrompt && candidates.isEmpty) continue;
+    candidates.add(option);
+    if (candidates.length == 5) break;
+  }
+
+  return candidates.length >= 2 ? candidates : const <AssistantReplyOption>[];
+}
+
+bool _looksLikeOptionPrompt(String line) {
+  final normalized = line.toLowerCase();
+  return normalized.contains('option') ||
+      normalized.contains('choose') ||
+      normalized.contains('pick') ||
+      normalized.contains('select') ||
+      normalized.contains('want me') ||
+      normalized.contains('would you like') ||
+      normalized.contains('要我') ||
+      normalized.contains('想让我') ||
+      normalized.contains('选项') ||
+      normalized.contains('选择');
+}
+
+AssistantReplyOption? _parseReplyOptionLine(String line) {
+  final match =
+      RegExp(r'^(?:[-*•]\s+|\d{1,2}[.)]\s+)(.+?)\s*$').firstMatch(line);
+  if (match == null) return null;
+  final label = match.group(1)!.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (label.length < 2 || label.length > 140) return null;
+  if (label.endsWith(':')) return null;
+  return AssistantReplyOption(label: label, prompt: label);
 }
 
 class ChatScreen extends StatefulWidget {
@@ -255,6 +322,14 @@ class _ChatScreenState extends State<ChatScreen> {
                               if (isNewLast) _animatedInIds.add(item.id);
                               // RepaintBoundary so a streaming bubble's frequent
                               // repaints don't dirty the rest of the list.
+                              final replyOptions =
+                                  item.role == ChatItemRole.assistant &&
+                                          itemIndex == _items.length - 1 &&
+                                          canSend &&
+                                          !item.pending &&
+                                          !item.failed
+                                      ? extractAssistantReplyOptions(item.text)
+                                      : const <AssistantReplyOption>[];
                               return RepaintBoundary(
                                 key: ValueKey(item.id),
                                 child: _EntranceFade(
@@ -277,6 +352,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                                 item.seq != null &&
                                                 !item.pending
                                             ? () => _showFeedbackSheet(item)
+                                            : null,
+                                    replyOptions: replyOptions,
+                                    onReplyOption:
+                                        replyOptions.isNotEmpty && !_isSending
+                                            ? _sendReplyOption
                                             : null,
                                   ),
                                 ),
@@ -561,6 +641,12 @@ class _ChatScreenState extends State<ChatScreen> {
     await _send();
   }
 
+  Future<void> _sendReplyOption(AssistantReplyOption option) async {
+    if (_isSending || _pendingImages.isNotEmpty) return;
+    _messageController.text = option.prompt;
+    await _send();
+  }
+
   Future<void> _retryFailedMessage(ChatItem failedItem) async {
     if (_isSending || !failedItem.failed) return;
 
@@ -677,14 +763,25 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (result == null || !mounted) return;
     try {
-      final artifactsMissing =
-          await context.read<BridgeClient>().submitFeedback(
-                sessionId: widget.session.sessionId,
-                messageSeq: seq,
-                messageId: item.id,
-                verdict: result.verdict,
-                note: result.note,
-              );
+      final client = context.read<BridgeClient>();
+      final imagePaths = <String>[];
+      if (result.image != null) {
+        final uploaded = await client.uploadImage(
+          sessionId: widget.session.sessionId,
+          name: result.image!.name,
+          mime: result.image!.mime,
+          bytes: result.image!.bytes,
+        );
+        imagePaths.add(uploaded.path);
+      }
+      final artifactsMissing = await client.submitFeedback(
+        sessionId: widget.session.sessionId,
+        messageSeq: seq,
+        messageId: item.id,
+        verdict: result.verdict,
+        note: result.note,
+        imagePaths: imagePaths.isEmpty ? null : imagePaths,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1479,6 +1576,32 @@ class _PromptShortcutStrip extends StatelessWidget {
   }
 }
 
+class _AssistantReplyOptionStrip extends StatelessWidget {
+  const _AssistantReplyOptionStrip({
+    required this.options,
+    required this.onSelected,
+  });
+
+  final List<AssistantReplyOption> options;
+  final ValueChanged<AssistantReplyOption> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final option in options)
+          ActionChip(
+            avatar: const Icon(Icons.reply, size: 16),
+            label: Text(option.label),
+            onPressed: () => onSelected(option),
+          ),
+      ],
+    );
+  }
+}
+
 class _PendingImageStrip extends StatelessWidget {
   const _PendingImageStrip({
     required this.images,
@@ -1645,6 +1768,8 @@ class _ChatBubble extends StatelessWidget {
     required this.onOpenFile,
     this.onRetry,
     this.onFeedback,
+    this.replyOptions = const <AssistantReplyOption>[],
+    this.onReplyOption,
   });
 
   static const double _collapsedMaxHeight = 280;
@@ -1657,6 +1782,8 @@ class _ChatBubble extends StatelessWidget {
   final ValueChanged<FileReference> onOpenFile;
   final VoidCallback? onRetry;
   final VoidCallback? onFeedback;
+  final List<AssistantReplyOption> replyOptions;
+  final ValueChanged<AssistantReplyOption>? onReplyOption;
 
   @override
   Widget build(BuildContext context) {
@@ -1677,6 +1804,10 @@ class _ChatBubble extends StatelessWidget {
     final isAnimating = frame?.isAnimating ?? false;
     final displayText = frame?.text ?? item.text;
     final isCollapsible = !isAnimating && _isCollapsible(displayText);
+    final showReplyOptions = !isUser &&
+        !isAnimating &&
+        replyOptions.isNotEmpty &&
+        onReplyOption != null;
     final colorScheme = Theme.of(context).colorScheme;
     final background = isUser
         ? colorScheme.primaryContainer
@@ -1728,6 +1859,13 @@ class _ChatBubble extends StatelessWidget {
                       ),
                       label: Text(expanded ? 'Collapse' : 'Show full response'),
                       onPressed: onToggleExpanded,
+                    ),
+                  ],
+                  if (showReplyOptions) ...[
+                    const SizedBox(height: 8),
+                    _AssistantReplyOptionStrip(
+                      options: replyOptions,
+                      onSelected: onReplyOption!,
                     ),
                   ],
                   if (onFeedback != null) ...[
@@ -1795,10 +1933,11 @@ class _ChatBubble extends StatelessWidget {
 }
 
 class _FeedbackResult {
-  const _FeedbackResult({required this.verdict, this.note});
+  const _FeedbackResult({required this.verdict, this.note, this.image});
 
   final String verdict;
   final String? note;
+  final _PendingImageAttachment? image;
 }
 
 const List<({String value, String label})> _feedbackVerdicts = [
@@ -1820,11 +1959,40 @@ class _FeedbackSheet extends StatefulWidget {
 class _FeedbackSheetState extends State<_FeedbackSheet> {
   String? _verdict;
   final _noteController = TextEditingController();
+  _PendingImageAttachment? _image;
+  String? _imageError;
 
   @override
   void dispose() {
     _noteController.dispose();
     super.dispose();
+  }
+
+  Future<void> _attachScreenshot() async {
+    try {
+      final raw = await _mediaChannel.invokeMethod<Object?>('pickImage');
+      if (!mounted || raw is! Map) return;
+      final result = Map<Object?, Object?>.from(raw);
+      final bytes = result['bytes'];
+      if (bytes is! Uint8List || bytes.isEmpty) {
+        setState(() => _imageError = 'Selected image is empty.');
+        return;
+      }
+      if (bytes.length > 10 * 1024 * 1024) {
+        setState(() => _imageError = 'Images must be 10 MB or smaller.');
+        return;
+      }
+      setState(() {
+        _image = _PendingImageAttachment(
+          name: result['name'] as String? ?? 'screenshot',
+          mime: result['mime'] as String? ?? 'image/jpeg',
+          bytes: bytes,
+        );
+        _imageError = null;
+      });
+    } on PlatformException catch (error) {
+      setState(() => _imageError = error.message ?? 'Could not pick image.');
+    }
   }
 
   @override
@@ -1873,6 +2041,42 @@ class _FeedbackSheetState extends State<_FeedbackSheet> {
               ),
             ),
             const SizedBox(height: 8),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.image_outlined, size: 18),
+                  label: Text(_image == null ? 'Attach screenshot' : 'Replace'),
+                  onPressed: _attachScreenshot,
+                ),
+                const SizedBox(width: 10),
+                if (_image != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Image.memory(
+                      _image!.bytes,
+                      width: 40,
+                      height: 40,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Remove',
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => setState(() => _image = null),
+                  ),
+                ],
+              ],
+            ),
+            if (_imageError != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  _imageError!,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.error),
+                ),
+              ),
+            const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton(
@@ -1882,6 +2086,7 @@ class _FeedbackSheetState extends State<_FeedbackSheet> {
                           _FeedbackResult(
                             verdict: _verdict!,
                             note: _noteController.text,
+                            image: _image,
                           ),
                         ),
                 child: const Text('Submit'),
@@ -2106,7 +2311,10 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
       builder: (context, snapshot) {
         final fileReferences = snapshot.data ?? const <FileReference>[];
         return MarkdownBody(
-          data: _withInlineLinks(widget.text, fileReferences),
+          data: _withInlineLinks(
+            _neutralizeSetextHeadings(widget.text),
+            fileReferences,
+          ),
           selectable: true,
           onTapLink: (_, href, __) {
             _openMarkdownLink(href, fileReferences, widget.onOpenFile);
@@ -2127,6 +2335,14 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
             pPadding: const EdgeInsets.only(bottom: 6),
             blockSpacing: 8,
             listIndent: 20,
+            // Keep headings restrained on a phone — the default theme scale makes
+            // H1/H2 dominate the bubble.
+            h1: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+            h2: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            h3: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+            h4: bodyStyle?.copyWith(fontWeight: FontWeight.w600),
+            h5: bodyStyle?.copyWith(fontWeight: FontWeight.w600),
+            h6: bodyStyle?.copyWith(fontWeight: FontWeight.w600),
             code: codeStyle,
             blockquotePadding: const EdgeInsets.only(left: 10),
             blockquoteDecoration: BoxDecoration(
@@ -2142,6 +2358,28 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
       },
     );
   }
+}
+
+/// Markdown setext headings turn any text line directly followed by a line of
+/// `---` or `===` into a giant H1/H2 — so an assistant that uses `---` as a
+/// divider under a sentence renders the whole sentence as a heading. Insert a
+/// blank line before such underline rows so they become a thematic break (hr)
+/// and the text above stays a normal paragraph.
+String _neutralizeSetextHeadings(String input) {
+  final lines = input.split('\n');
+  final underline = RegExp(r'^[-=]+$');
+  final out = <String>[];
+  for (final line in lines) {
+    final trimmed = line.trim();
+    if (underline.hasMatch(trimmed) && out.isNotEmpty) {
+      final prev = out.last.trim();
+      if (prev.isNotEmpty && !underline.hasMatch(prev)) {
+        out.add('');
+      }
+    }
+    out.add(line);
+  }
+  return out.join('\n');
 }
 
 const _fileHrefPrefix = 'ccm-file:';
