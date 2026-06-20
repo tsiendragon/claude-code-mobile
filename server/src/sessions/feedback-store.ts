@@ -23,6 +23,7 @@ export type FeedbackRecord = {
   note?: string;
   artifacts_missing: boolean;
   artifacts?: FeedbackArtifacts;
+  image_paths?: string[];
   client?: { app_version?: string; platform?: string };
 };
 

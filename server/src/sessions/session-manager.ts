@@ -28,6 +28,7 @@ export type FeedbackInput = {
   messageId?: string;
   verdict: FeedbackVerdict;
   note?: string;
+  imagePaths?: string[];
   client?: { app_version?: string; platform?: string };
 };
 
@@ -481,6 +482,7 @@ export class SessionManager {
         : fallbackRenderText !== undefined
           ? { artifacts: { captured_at: "", raw_stdout: "", parsed: null, render_text: fallbackRenderText } }
           : {}),
+      ...(input.imagePaths && input.imagePaths.length > 0 ? { image_paths: input.imagePaths } : {}),
       ...(input.client === undefined ? {} : { client: input.client })
     };
     await this.feedback.append(session.cccName, record);

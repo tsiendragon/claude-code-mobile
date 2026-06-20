@@ -163,6 +163,14 @@ export function validateRequest(input: unknown, maxPromptBytes: number): Validat
     if (input.client !== undefined && !isObject(input.client)) {
       return invalid("client must be an object");
     }
+    if (input.image_paths !== undefined) {
+      if (!Array.isArray(input.image_paths) || input.image_paths.length > 4) {
+        return invalid("image_paths must be an array of at most 4 paths");
+      }
+      if (!input.image_paths.every((item) => typeof item === "string" && item.length > 0 && item.length <= 1024)) {
+        return invalid("image_paths entries must be non-empty strings");
+      }
+    }
   }
 
   if (input.type === "messages.list") {

@@ -258,6 +258,9 @@ export class WsGateway {
               messageId: typeof request.message_id === "string" ? request.message_id : undefined,
               verdict: request.verdict as FeedbackVerdict,
               note: typeof request.note === "string" ? request.note : undefined,
+              imagePaths: Array.isArray(request.image_paths)
+                ? request.image_paths.filter((item): item is string => typeof item === "string")
+                : undefined,
               client: isClientMeta(request.client) ? request.client : undefined
             }
           )));
